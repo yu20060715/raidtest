@@ -1,0 +1,26 @@
+# Build output
+build/
+*.o
+*.exe
+*.dll
+
+# Test artifacts
+Craidtest_*.dat
+raidtest_*.dat
+
+# IDE
+.vs/
+.vscode/
+*.suo
+*.user
+*.sdf
+*.opensdf
+ipch/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temp
+*.tmp
+*.bak
