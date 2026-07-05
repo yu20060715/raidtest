@@ -25,7 +25,7 @@ void cmd_cleanup_all(void) { raid_cleanup(); }
 void cmd_print_banner(void) {
     printf("\n");
     printf("  ==============================================\n");
-    printf("    RAIDTEST v1.0 - Asymmetric Stripe Engine\n");
+    printf("    RAIDTEST v1.0 RC2 - Asymmetric Stripe Engine\n");
     printf("    Non-对称快慢混搭 RAID 0 效能引擎\n");
     printf("    支援: SATA SSD + NVMe SSD 自由混搭\n");
     printf("  ==============================================\n");
@@ -38,7 +38,9 @@ static RC cmd_scan(void) { return raid_scan(); }
 
 static RC cmd_mapdrive(int argc, char* argv[]) {
     if (argc < 2) { LOG_ERROR("Usage: mapdrive <disk_id> <drive_letter>"); return RC_ERR_INVALID_ARG; }
-    return raid_mapdrive((uint32_t)atoi(argv[0]), argv[1]);
+    uint32_t disk_id = 0;
+    if (!safe_atou32(argv[0], &disk_id)) { LOG_ERROR("Invalid disk id '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
+    return raid_mapdrive(disk_id, argv[1]);
 }
 
 static RC cmd_bench(int argc, char* argv[]) { return raid_bench(argc, argv); }

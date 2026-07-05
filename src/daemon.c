@@ -90,7 +90,7 @@ static bool daemon_load_volume(APP_STATE* state) {
                 state->volume.cache_enabled = true;
                 state->cache_on = true;
                 state->cache_mb = (uint32_t)(cache_size / (1024 * 1024));
-                state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
+                state->volume.cache.flush_thread = state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
                 LOG_OK("Cache enabled: %u MB", state->cache_mb);
             }
         }
@@ -115,10 +115,14 @@ static bool daemon_load_volume(APP_STATE* state) {
         for (uint32_t j = 0; j < cfg.disk_count; j++) {
             char dl = (char)state->physical_disks[i]->drive_letter[0];
             if (dl == cfg.disks[j].drive_letter) {
-                if (state->disk_count < MAX_CUSTOM_DISKS) {
+                if (state->disk_count < MAX_DISKS) {
                     disk_map_drive((char[]){dl, 0}, state->physical_disks[i]);
                     state->pool_sizes_mb[state->disk_count] = cfg.disks[j].pool_mb;
                     uint64_t size_bytes = cfg.disks[j].pool_mb * 1024ULL * 1024ULL;
+                    if (validate_pool_size(size_bytes) != RC_OK) {
+                        LOG_ERROR("Invalid pool size %llu MB from config", (unsigned long long)cfg.disks[j].pool_mb);
+                        continue;
+                    }
                     pool_file_create(state->physical_disks[i], size_bytes);
                     state->disks[state->disk_count++] = state->physical_disks[i];
                 }
@@ -153,7 +157,7 @@ static bool daemon_load_volume(APP_STATE* state) {
             state->volume.cache_enabled = true;
             state->cache_on = true;
             state->cache_mb = cfg.cache_mb;
-            state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
+            state->volume.cache.flush_thread = state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
             LOG_OK("Cache enabled: %u MB", cfg.cache_mb);
         }
     }

@@ -52,7 +52,7 @@ static bool journal_write_entry(STRIPE_VOLUME* vol, JOURNAL_ENTRY* je) {
 
         SetFilePointer(h, 0, NULL, FILE_END);
         DWORD written = 0;
-        BOOL ok = WriteFile(h, je, sizeof(*je), &written, NULL);
+        BOOL ok = WriteFile(h, je, sizeof(*je), &written, NULL) && written == sizeof(*je);
         if (ok) ok = FlushFileBuffers(h);
         CloseHandle(h);
         if (ok) any_ok = true;
@@ -83,9 +83,9 @@ bool journal_data(STRIPE_VOLUME* vol, uint64_t virtual_offset, uint32_t length, 
         if (h == INVALID_HANDLE_VALUE) continue;
         SetFilePointer(h, 0, NULL, FILE_END);
         DWORD written = 0;
-        BOOL ok = WriteFile(h, &je, sizeof(je), &written, NULL);
+        BOOL ok = WriteFile(h, &je, sizeof(je), &written, NULL) && written == sizeof(je);
         if (ok && data && length > 0)
-            ok = WriteFile(h, data, length, &written, NULL);
+            ok = WriteFile(h, data, length, &written, NULL) && written == length;
         if (ok) ok = FlushFileBuffers(h);
         CloseHandle(h);
         if (ok) any_ok = true;
@@ -105,6 +105,7 @@ bool journal_commit(STRIPE_VOLUME* vol) {
 bool journal_recover_all(STRIPE_VOLUME* vol) {
     if (!vol) return false;
 
+    bool all_clean = true;
     for (uint32_t di = 0; di < vol->disk_count; di++) {
         wchar_t path[MAX_DRIVE_PATH];
         wchar_t root[4] = { vol->disks[di]->drive_letter[0], L':', L'\\', 0 };
@@ -121,7 +122,6 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
 
         if (read < sizeof(JOURNAL_ENTRY)) continue;
 
-        /* Parse entries */
         uint32_t offset = 0;
         bool has_begin = false;
         bool has_commit = false;
@@ -142,8 +142,6 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
             je.checksum = saved_cs;
             if (actual != saved_cs) { offset = read; break; }
 
-            /* v1 (no payload): entry_type in bounds means no trailing data.
-               v2+: JT_DATA has `je.length` bytes of payload after the header. */
             uint32_t payload = 0;
             if (je.version >= 2 && je.entry_type == JT_DATA)
                 payload = je.length;
@@ -169,6 +167,7 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
         bool clean = (!has_begin || has_commit);
 
         if (!clean) {
+            all_clean = false;
             LOG_WARN("Incomplete journal on %ls (gen=%llu, %u ranges) — replaying...",
                      root, (unsigned long long)begin_gen, range_count);
             uint32_t replayed = 0, failed = 0;
@@ -186,13 +185,10 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
             LOG_OK("Journal on %ls: clean", root);
         }
 
-        /* Clear journal */
         h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
-
-        return clean;
     }
 
-    return true;
+    return all_clean;
 }

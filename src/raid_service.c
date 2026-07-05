@@ -9,6 +9,7 @@
 #include "event_bus.h"
 #include "pool_io.h"
 #include "stripe_engine.h"
+#include "profiler.h"
 
 static APP_STATE* S(void) { return &g_state; }
 
@@ -28,7 +29,10 @@ static void event_log_callback(EVENT_TYPE type, const char* data, void* userdata
                        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
                        event_type_str(type), data && data[0] ? ": " : "", data && data[0] ? data : "");
     DWORD written = 0;
-    WriteFile(h, buf, (DWORD)len, &written, NULL);
+    if (!WriteFile(h, buf, (DWORD)len, &written, NULL) || written != (DWORD)len) {
+        CloseHandle(h);
+        return;
+    }
     CloseHandle(h);
     /* Trim if >512KB */
     WIN32_FILE_ATTRIBUTE_DATA info;
@@ -61,6 +65,7 @@ RC raid_init(void) {
     cleanup_bench_dirs();
     GetEnvironmentVariableW(L"APPDATA", S()->appdata_path, MAX_DRIVE_PATH);
     event_bus_init();
+    profiler_init();
     event_bus_subscribe(EVENT_DISK_FOUND, event_log_callback, NULL);
     event_bus_subscribe(EVENT_DISK_REMOVED, event_log_callback, NULL);
     event_bus_subscribe(EVENT_DISK_BENCHED, event_log_callback, NULL);
@@ -114,7 +119,7 @@ RC raid_select(int argc, char* argv[]) {
     if (count == 0) { LOG_ERROR("Usage: select <id1> <id2> ..."); return RC_ERR_INVALID_ARG; }
     uint32_t ids[MAX_DISKS];
     for (uint32_t i = 0; i < count && i < MAX_DISKS; i++) {
-        ids[i] = (uint32_t)atoi(argv[i]);
+        if (!safe_atou32(argv[i], &ids[i])) { LOG_ERROR("Invalid disk id '%s'", argv[i]); return RC_ERR_INVALID_ARG; }
         if (ids[i] >= device_get_count()) { LOG_ERROR("Invalid disk id %u", ids[i]); return RC_ERR_INVALID_DISK; }
     }
     device_select(ids, count);
@@ -138,7 +143,9 @@ RC raid_bench(int argc, char* argv[]) {
     RC rc; if ((rc = require(STATE_DISCOVERED)) != RC_OK) return rc;
     uint32_t size_mb = BENCH_SIZE_MB;
     if (argc > 0) {
-        size_mb = (uint32_t)atoi(argv[0]);
+        uint32_t tmp = 0;
+        if (!safe_atou32(argv[0], &tmp)) { LOG_ERROR("Invalid size '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
+        size_mb = tmp;
         if (size_mb < 64) size_mb = 64;
         if (size_mb > 2048) size_mb = 2048;
     }
@@ -168,9 +175,11 @@ RC raid_init_pools(int argc, char* argv[]) {
             char* colon = strchr(argv[i], ':');
             if (!colon) { LOG_ERROR("Bad format: %s (expected id:mb)", argv[i]); return RC_ERR_INVALID_ARG; }
             *colon = '\0';
-            uint32_t di = (uint32_t)atoi(argv[i]);
-            uint64_t mb = (uint64_t)atoll(colon + 1);
+            uint32_t di = 0;
+            if (!safe_atou32(argv[i], &di)) { *colon = ':'; LOG_ERROR("Bad disk id in %s", argv[i]); return RC_ERR_INVALID_ARG; }
             *colon = ':';
+            uint64_t mb = 0;
+            if (!safe_atou64(colon + 1, &mb) || mb == 0) { LOG_ERROR("Bad size in %s (expected id:mb)", argv[i]); return RC_ERR_INVALID_ARG; }
             if (di >= device_get_count()) { LOG_ERROR("Invalid disk id %u", di); return RC_ERR_INVALID_DISK; }
             if (mb < 1024) { LOG_ERROR("Pool size too small: %llu MB (min 1024)", (unsigned long long)mb); return RC_ERR_INVALID_ARG; }
             DISK_INFO* d = device_get(di);
@@ -184,9 +193,11 @@ RC raid_init_pools(int argc, char* argv[]) {
             pair_count++;
         }
     } else if (argc > 0) {
-        uint32_t first_id = (uint32_t)atoi(argv[0]);
+        uint32_t first_id = 0;
+        if (!safe_atou32(argv[0], &first_id)) first_id = UINT32_MAX;
         if (argc == 1 && first_id >= device_get_count()) {
-            uint64_t default_size = (uint64_t)atoll(argv[0]);
+            uint64_t default_size = 0;
+            if (!safe_atou64(argv[0], &default_size)) { LOG_ERROR("Invalid size '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
             if (default_size < 1024) default_size = 1024;
             uint32_t sel_indices[MAX_DISKS], sel_count = 0;
             for (uint32_t i = 0; i < device_get_count(); i++) {
@@ -208,7 +219,7 @@ RC raid_init_pools(int argc, char* argv[]) {
             uint64_t default_size = POOL_SIZE_DEFAULT_MB;
             uint32_t ids[MAX_DISKS];
             for (int i = 0; i < argc && (uint32_t)i < MAX_DISKS; i++) {
-                ids[i] = (uint32_t)atoi(argv[i]);
+                if (!safe_atou32(argv[i], &ids[i])) { LOG_ERROR("Invalid disk id '%s'", argv[i]); return RC_ERR_INVALID_ARG; }
                 if (ids[i] >= device_get_count()) { LOG_ERROR("Invalid disk id %u", ids[i]); return RC_ERR_INVALID_DISK; }
             }
             device_select(ids, (uint32_t)argc);
@@ -311,9 +322,11 @@ RC raid_rebuild(int argc, char* argv[]) {
         return RC_ERR_INVALID_STATE;
     }
     if (argc < 2) { LOG_ERROR("Usage: rebuild <disk_idx> <new_disk_id> <pool_mb>"); return RC_ERR_INVALID_ARG; }
-    uint32_t replace_idx = (uint32_t)atoi(argv[0]);
-    uint32_t new_disk_id = (uint32_t)atoi(argv[1]);
-    uint64_t pool_mb = (argc >= 3) ? (uint64_t)atoll(argv[2]) : 1024;
+    uint32_t replace_idx = 0, new_disk_id = 0;
+    if (!safe_atou32(argv[0], &replace_idx)) { LOG_ERROR("Invalid disk index '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
+    if (!safe_atou32(argv[1], &new_disk_id)) { LOG_ERROR("Invalid disk id '%s'", argv[1]); return RC_ERR_INVALID_ARG; }
+    uint64_t pool_mb = 1024;
+    if (argc >= 3 && !safe_atou64(argv[2], &pool_mb)) { LOG_ERROR("Invalid pool size '%s'", argv[2]); return RC_ERR_INVALID_ARG; }
     if (pool_mb < 1024) pool_mb = 1024;
     if (!volume_rebuild(&S()->volume, S()->physical_disks, S()->physical_count,
                         replace_idx, new_disk_id, pool_mb))
@@ -380,12 +393,9 @@ RC raid_destroy(void) {
 }
 
 RC raid_purge(void) {
-    if (S()->state != STATE_INITIALIZED && S()->state != STATE_MOUNTED && S()->state != STATE_UNMOUNTED) {
-        LOG_ERROR("Not allowed in '%s' (need INITIALIZED/MOUNTED/UNMOUNTED)", raid_state_str(S()->state));
+    if (S()->state != STATE_INITIALIZED && S()->state != STATE_UNMOUNTED) {
+        LOG_ERROR("Not allowed in '%s' (need INITIALIZED or UNMOUNTED). Use 'unmount' first.", raid_state_str(S()->state));
         return RC_ERR_INVALID_STATE;
-    }
-    if (S()->mounted) {
-        volume_unmount(&S()->volume, &S()->cache_on, &S()->flush_thread, &S()->mounted);
     }
     cleanup_pool_session(S());
     S()->state = STATE_DISCOVERED;
@@ -409,8 +419,6 @@ RC raid_cache(int argc, char* argv[]) {
         if (!S()->cache_on) { LOG_WARN("Cache already off"); return RC_ERR_ALREADY; }
         if (S()->flush_thread) {
             S()->volume.cache.running = 0;
-            WaitForSingleObject(S()->flush_thread, INFINITE);
-            CloseHandle(S()->flush_thread);
             S()->flush_thread = NULL;
         }
         cache_flush_all(&S()->volume.cache, &S()->volume);
@@ -423,7 +431,9 @@ RC raid_cache(int argc, char* argv[]) {
     }
     if (S()->cache_on) { LOG_WARN("Cache already on. Use 'cache off' first to reinit"); return RC_ERR_ALREADY; }
     uint32_t size_mb = CACHE_DEFAULT_MB;
-    if (argc > 0) size_mb = (uint32_t)atoi(argv[0]);
+    if (argc > 0) {
+        if (!safe_atou32(argv[0], &size_mb)) { LOG_ERROR("Invalid cache size '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
+    }
     if (size_mb < 256) size_mb = 256;
     LOG_INFO("Initializing %u MB RAM write-back cache...", size_mb);
     if (!cache_init(&S()->volume.cache, (uint64_t)size_mb * 1024ULL * 1024ULL)) {
@@ -432,7 +442,7 @@ RC raid_cache(int argc, char* argv[]) {
     S()->volume.cache_enabled = true;
     S()->cache_on = true;
     S()->cache_mb = size_mb;
-    S()->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &S()->volume, 0, NULL);
+    S()->volume.cache.flush_thread = S()->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &S()->volume, 0, NULL);
     if (S()->flush_thread) LOG_OK("Background flush thread started (1s interval)");
     event_bus_publish(EVENT_CACHE_CHANGED, "on");
     LOG_OK("Write-back cache enabled: %u MB (block size=%u KB)", size_mb, CACHE_BLOCK_SIZE / 1024);
@@ -581,8 +591,8 @@ RC raid_random(int argc, char** args) {
 RC raid_benchfs(int argc, char* argv[]) {
     RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) return rc;
     uint32_t size_mb = 512, block_kb = 1024;
-    if (argc > 0) size_mb = (uint32_t)atoi(argv[0]);
-    if (argc > 1) block_kb = (uint32_t)atoi(argv[1]);
+    if (argc > 0 && !safe_atou32(argv[0], &size_mb)) { LOG_ERROR("Invalid size '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
+    if (argc > 1 && !safe_atou32(argv[1], &block_kb)) { LOG_ERROR("Invalid block size '%s'", argv[1]); return RC_ERR_INVALID_ARG; }
     if (size_mb < 64) size_mb = 64;
     if (size_mb > 4096) size_mb = 4096;
     if (block_kb < 4) block_kb = 4;
@@ -651,7 +661,8 @@ RC raid_simulate(int argc, char* argv[]) {
         return RC_ERR_INVALID_STATE;
     }
     if (argc < 2) { LOG_ERROR("Usage: simulate <disk_idx> <mode>  (mode: fail, healthy, disconnect)"); return RC_ERR_INVALID_ARG; }
-    uint32_t idx = (uint32_t)atoi(argv[0]);
+    uint32_t idx = 0;
+    if (!safe_atou32(argv[0], &idx)) { LOG_ERROR("Invalid disk index '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
     if (idx >= S()->volume.disk_count) { LOG_ERROR("Invalid disk index %u", idx); return RC_ERR_INVALID_ARG; }
     DISK_INFO* d = S()->volume.disks[idx];
     char mode = argv[1][0];

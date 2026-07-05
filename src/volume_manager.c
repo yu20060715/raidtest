@@ -15,14 +15,7 @@ void volume_gen_uuid(STRIPE_VOLUME* vol) {
 
 bool volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
     if (vol->cache_enabled) {
-        if (vol->cache.running) {
-            vol->cache.running = 0;
-            if (vol->cache.flush_thread) {
-                WaitForSingleObject(vol->cache.flush_thread, INFINITE);
-                CloseHandle(vol->cache.flush_thread);
-                vol->cache.flush_thread = NULL;
-            }
-        }
+        vol->cache.running = 0;
         cache_flush_all(&vol->cache, vol);
         cache_destroy(&vol->cache);
     }
@@ -50,14 +43,7 @@ bool volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
 
 bool volume_mirror(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
     if (vol->cache_enabled) {
-        if (vol->cache.running) {
-            vol->cache.running = 0;
-            if (vol->cache.flush_thread) {
-                WaitForSingleObject(vol->cache.flush_thread, INFINITE);
-                CloseHandle(vol->cache.flush_thread);
-                vol->cache.flush_thread = NULL;
-            }
-        }
+        vol->cache.running = 0;
         cache_flush_all(&vol->cache, vol);
         cache_destroy(&vol->cache);
     }
@@ -103,14 +89,10 @@ bool volume_mount(STRIPE_VOLUME* vol, char drive_letter) {
 
 bool volume_unmount(STRIPE_VOLUME* vol, bool* cache_on, HANDLE* flush_thread, bool* mounted) {
     if (flush_thread && *flush_thread) {
-        if (vol->cache.running) {
-            vol->cache.running = 0;
-            WaitForSingleObject(*flush_thread, INFINITE);
-            CloseHandle(*flush_thread);
-            *flush_thread = NULL;
-        }
+        vol->cache.running = 0;
         cache_flush_all(&vol->cache, vol);
         cache_destroy(&vol->cache);
+        *flush_thread = NULL;
         vol->cache_enabled = false;
     }
     if (*mounted) {
@@ -169,6 +151,11 @@ bool volume_expand(STRIPE_VOLUME* vol, DISK_INFO** physical_disks, uint32_t phys
         DISK_INFO* disk = physical_disks[di];
         if (!disk->drive_letter[0]) { LOG_ERROR("Disk %u has no drive letter", di); goto rollback; }
         uint64_t size_bytes = (uint64_t)sel_sizes[i] * 1024ULL * 1024ULL;
+        if (validate_pool_size(size_bytes) != RC_OK) {
+            LOG_ERROR("Invalid pool size %llu MB for expand disk %u",
+                      (unsigned long long)sel_sizes[i], di);
+            goto rollback;
+        }
         if (!pool_file_create(disk, size_bytes)) goto rollback;
         if (!pool_file_open(disk)) { pool_file_delete(disk); goto rollback; }
         new_disks[created++] = disk;
@@ -204,6 +191,10 @@ bool volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO** physical_disks, uint32_t phy
     if (!new_disk->drive_letter[0]) { LOG_ERROR("Disk %u has no drive letter", new_disk_id); return false; }
 
     uint64_t size_bytes = pool_mb * 1024ULL * 1024ULL;
+    if (validate_pool_size(size_bytes) != RC_OK) {
+        LOG_ERROR("Invalid pool size %llu MB for rebuild", (unsigned long long)pool_mb);
+        return false;
+    }
     if (!pool_file_create(new_disk, size_bytes)) return false;
     if (!pool_file_open(new_disk)) { pool_file_delete(new_disk); return false; }
 

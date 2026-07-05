@@ -17,6 +17,8 @@ bool cache_init(RAM_CACHE* cache, uint64_t size_bytes) {
     cache->hit_count = 0;
     cache->miss_count = 0;
     cache->running = 1;
+    cache->flush_thread = NULL;
+    cache->write_through = 0;
     cache->flush_buffer = (uint8_t*)VirtualAlloc(NULL, MAX_FLUSH_SIZE, MEM_COMMIT, PAGE_READWRITE);
     if (!cache->flush_buffer) {
         free(cache->dirty_map); cache->dirty_map = NULL;
@@ -31,6 +33,11 @@ bool cache_init(RAM_CACHE* cache, uint64_t size_bytes) {
 void cache_destroy(RAM_CACHE* cache) {
     if (!cache || !cache->buffer) return;
     cache->running = 0;
+    if (cache->flush_thread) {
+        WaitForSingleObject(cache->flush_thread, INFINITE);
+        CloseHandle(cache->flush_thread);
+        cache->flush_thread = NULL;
+    }
     if (cache->dirty_map) free(cache->dirty_map);
     if (cache->flush_buffer) VirtualFree(cache->flush_buffer, 0, MEM_RELEASE);
     VirtualFree(cache->buffer, 0, MEM_RELEASE);
@@ -128,6 +135,13 @@ void cache_flush_all(RAM_CACHE* cache, STRIPE_VOLUME* vol) {
             for (uint32_t e = 0; e < entry_count; e++) {
                 DISK_INFO* disk = vol->disks[entries[e].disk_index];
                 HANDLE evt = CreateEventW(NULL, TRUE, FALSE, NULL);
+                if (!evt) {
+                    for (uint32_t j = 0; j < e; j++) {
+                        if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
+                        CloseHandle(events[j]);
+                    }
+                    ok = false; break;
+                }
                 events[e] = evt;
                 memset(&ovs[e], 0, sizeof(OVERLAPPED));
                 ovs[e].Offset = (DWORD)(entries[e].physical_offset & 0xFFFFFFFF);
@@ -142,7 +156,8 @@ void cache_flush_all(RAM_CACHE* cache, STRIPE_VOLUME* vol) {
             }
             if (ok) {
                 for (uint32_t e = 0; e < entry_count; e++) {
-                    GetOverlappedResult(vol->disks[entries[e].disk_index]->handle, &ovs[e], &dummy, TRUE);
+                    if (!GetOverlappedResult(vol->disks[entries[e].disk_index]->handle, &ovs[e], &dummy, TRUE))
+                        ok = false;
                     CloseHandle(events[e]);
                 }
             } else {
@@ -193,12 +208,11 @@ unsigned int __stdcall cache_flush_thread(void* arg) {
         uint32_t sleep_ms = 1000;
         if (cache->block_count > 0) {
             double ratio = (double)dirty_count / cache->block_count;
-            if (ratio > 0.50)      sleep_ms = 100;
-            else if (ratio > 0.25) sleep_ms = 250;
-            else if (ratio > 0.10) sleep_ms = 500;
+            if (ratio > 0.75)        sleep_ms = 10;
+            else if (ratio > 0.50)   sleep_ms = 50;
+            else if (ratio > 0.25)   sleep_ms = 100;
+            else if (ratio > 0.10)   sleep_ms = 250;
         }
-        if (dirty_count > cache->block_count / 2 && sleep_ms < 10) sleep_ms = 10;
-        else if (sleep_ms < 100) sleep_ms = 100;
 
         Sleep(sleep_ms);
         if (cache->running) cache_flush_all(cache, vol);

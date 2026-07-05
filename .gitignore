@@ -4,6 +4,19 @@ build/
 *.exe
 *.dll
 
+# Stress test executables
+test_longrun.exe
+test_random_io.exe
+test_concurrent.exe
+test_metadata_corrupt.exe
+test_powerfail.exe
+cli_bench.exe
+raidtest_tests_asan.exe
+asan_checks.exe
+
+# Benchmark output
+benchmark_results.csv
+
 # Test artifacts
 Craidtest_*.dat
 raidtest_*.dat

@@ -8,14 +8,10 @@
 
 void cleanup_cache(APP_STATE* state) {
     if (!state->cache_on) return;
-    if (state->flush_thread) {
-        state->volume.cache.running = 0;
-        WaitForSingleObject(state->flush_thread, INFINITE);
-        CloseHandle(state->flush_thread);
-        state->flush_thread = NULL;
-    }
+    state->volume.cache.running = 0;
     cache_flush_all(&state->volume.cache, &state->volume);
     cache_destroy(&state->volume.cache);
+    state->flush_thread = NULL;
     state->volume.cache_enabled = false;
     state->cache_on = false;
 }

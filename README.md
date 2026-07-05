@@ -3,7 +3,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)]()
 [![GUI](https://img.shields.io/badge/GUI-Dear%20ImGui%20%2B%20DirectX%2011-green)]()
 [![API](https://img.shields.io/badge/Mount-WinFsp%20FUSE-orange)]()
-[![Status](https://img.shields.io/badge/Status-RC1-yellow)]()
+[![Status](https://img.shields.io/badge/Status-RC2-yellow)]()
 
 **RAIDTEST** is a Windows-native software RAID prototype that creates, mounts, and manages virtual RAID volumes from physical disks or pool files. Originally a CLI tool, it now includes a full graphical interface built with Dear ImGui and DirectX 11.
 

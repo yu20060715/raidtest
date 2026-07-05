@@ -9,8 +9,8 @@ static int prompt_int(const char* question, int default_val, int min_val, int ma
     printf("\n  %s [%d]: ", question, default_val);
     char input[64];
     if (!fgets(input, sizeof(input), stdin)) return default_val;
-    int val = atoi(input);
-    if (val == 0 && input[0] != '0') val = default_val;
+    uint32_t uv = 0;
+    int val = safe_atou32(input, &uv) ? (int)uv : default_val;
     if (val < min_val) val = min_val;
     if (val > max_val) val = max_val;
     return val;
@@ -55,7 +55,8 @@ void wizard_run(APP_STATE* state) {
     char* ctx = NULL;
     char* tok = strtok_s(input, " \t\r\n", &ctx);
     while (tok && sel_count < MAX_DISKS) {
-        uint32_t id = (uint32_t)atoi(tok);
+        uint32_t id = 0;
+        if (!safe_atou32(tok, &id)) id = UINT32_MAX;
         if (id < state->physical_count) indices[sel_count++] = id;
         tok = strtok_s(NULL, " \t\r\n", &ctx);
     }
@@ -135,7 +136,7 @@ void wizard_run(APP_STATE* state) {
         state->volume.cache_enabled = true;
         state->cache_on = true;
         state->cache_mb = (uint32_t)cache_mb;
-        state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
+        state->volume.cache.flush_thread = state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
         if (state->flush_thread) LOG_OK("Background flush thread started (1s interval)");
     }
 

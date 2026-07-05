@@ -5,6 +5,7 @@ extern "C" {
 #include "device_manager.h"
 #include "planner_engine.h"
 #include "event_bus.h"
+#include "profiler.h"
 }
 
 #include "imgui.h"
@@ -21,7 +22,7 @@ extern "C" {
 
 #define MAX_LOG_LINES 500
 #define MAX_LOG_LINE_LEN 256
-#define APP_VERSION "v1.0 RC1"
+#define APP_VERSION "v1.0 RC2"
 
 enum WorkerAction {
     W_NONE = 0,
@@ -150,7 +151,7 @@ static unsigned int __stdcall worker_thread(void* arg) {
         g_gui.progress_frac = 1.0f;
         snprintf(result, 511, "Create: %s %s",
             rc == RC_OK ? "OK" : "FAILED",
-            rc == RC_OK ? "? Volume is ready for mount" : "");
+            rc == RC_OK ? " -> Volume is ready for mount" : "");
         refresh_ui_model();
         break;
     }
@@ -194,7 +195,7 @@ static unsigned int __stdcall worker_thread(void* arg) {
     }
     case W_REFRESH: {
         refresh_ui_model();
-        snprintf(result, 511, "Refreshed ? %u disk(s), state=%s",
+        snprintf(result, 511, "Refreshed - %u disk(s), state=%s",
             g_gui.disk_summary.count, ui_get_state_str());
         break;
     }
@@ -209,7 +210,7 @@ static unsigned int __stdcall worker_thread(void* arg) {
         HANDLE hf = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, NULL,
             CREATE_ALWAYS, FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH, NULL);
         if (hf == INVALID_HANDLE_VALUE) {
-            snprintf(result, 511, "Bench FAILED ? cannot create test file on %s", drv);
+            snprintf(result, 511, "Bench FAILED - cannot create test file on %s", drv);
             g_gui.progress_frac = 1.0f;
             break;
         }
@@ -786,6 +787,18 @@ static void ShowVolumeInfo(void) {
             ImGui::Text("Capacity:"); ImGui::NextColumn();
             ImGui::Text("%llu GB (%llu bytes)", vi->virtual_capacity_bytes / 1000000000ULL,
                 vi->virtual_capacity_bytes); ImGui::NextColumn();
+            ImGui::Text("Used:"); ImGui::NextColumn();
+            UI_HEALTH_SUMMARY* h = &g_gui.health;
+            if (vi->mounted && h->total_count > 0) {
+                double used_pct = (double)vi->bytes_written / (double)vi->virtual_capacity_bytes * 100.0;
+                if (used_pct > 100) used_pct = 100;
+                ImGui::Text("%.1f%% (%llu GB)", used_pct,
+                    vi->bytes_written / 1000000000ULL);
+                ImGui::ProgressBar((float)(used_pct / 100.0), ImVec2(0, 10), "");
+            } else {
+                ImGui::TextUnformatted("N/A");
+            }
+            ImGui::NextColumn();
             ImGui::Text("Mounted:"); ImGui::NextColumn();
             if (vi->mounted)
                 ImGui::TextColored(ImVec4(0,1,0,1), "Yes");
@@ -814,7 +827,6 @@ static void ShowVolumeInfo(void) {
             ImGui::Columns(1);
 
             ImGui::Separator();
-            UI_HEALTH_SUMMARY* h = &g_gui.health;
             ImGui::Text("Health:");
             ImGui::SameLine();
             if (h->total_count > 0 && !h->degraded)
@@ -825,6 +837,50 @@ static void ShowVolumeInfo(void) {
                 ImGui::TextUnformatted("N/A");
         } else {
             ImGui::TextDisabled("No volume ? Scan + Create first");
+        }
+    }
+    ImGui::End();
+}
+
+static void ShowPerformancePanel(void) {
+    ImGui::Begin("Performance", NULL, ImGuiWindowFlags_NoCollapse);
+    {
+        UI_VOLUME_INFO* vi = &g_gui.vol_info;
+        profiler_update_rates(vi->bytes_read, vi->bytes_written);
+        IO_PROFILER* p = profiler_get();
+        ImGui::Columns(2, NULL, false);
+        char buf[64];
+        ImGui::Text("Read:"); ImGui::NextColumn();
+        snprintf(buf, sizeof(buf), "%.1f MB/s", p->avg_read_mbs);
+        ImGui::TextUnformatted(buf); ImGui::NextColumn();
+        ImGui::Text("Write:"); ImGui::NextColumn();
+        snprintf(buf, sizeof(buf), "%.1f MB/s", p->avg_write_mbs);
+        ImGui::TextUnformatted(buf); ImGui::NextColumn();
+        ImGui::Text("Avg Read Latency:"); ImGui::NextColumn();
+        snprintf(buf, sizeof(buf), "%.2f ms", p->avg_read_latency_ms);
+        ImGui::TextUnformatted(buf); ImGui::NextColumn();
+        ImGui::Text("Avg Write Latency:"); ImGui::NextColumn();
+        snprintf(buf, sizeof(buf), "%.2f ms", p->avg_write_latency_ms);
+        ImGui::TextUnformatted(buf); ImGui::NextColumn();
+        ImGui::Text("IOPS:"); ImGui::NextColumn();
+        snprintf(buf, sizeof(buf), "%.0f (R) / %.0f (W)", p->avg_iops_read, p->avg_iops_write);
+        ImGui::TextUnformatted(buf); ImGui::NextColumn();
+        ImGui::Text("Queue Depth:"); ImGui::NextColumn();
+        snprintf(buf, sizeof(buf), "%u", (unsigned int)p->avg_queue_depth);
+        ImGui::TextUnformatted(buf); ImGui::NextColumn();
+        ImGui::Columns(1);
+        UI_HEALTH_SUMMARY* h = &g_gui.health;
+        ImGui::Separator();
+        if (vi->mounted && h->total_count > 0) {
+            ImGui::Text("Capacity:");
+            ImGui::SameLine();
+            double used_pct = (double)vi->bytes_written / (double)vi->virtual_capacity_bytes * 100.0;
+            if (used_pct > 100) used_pct = 100;
+            snprintf(buf, sizeof(buf), "%.1f%%", used_pct);
+            ImGui::ProgressBar((float)(used_pct / 100.0), ImVec2(0, 12), buf);
+        }
+        if (h->total_count > 0) {
+            ImGui::Text("Volume: %s", h->degraded ? "? DEGRADED" : "? Healthy");
         }
     }
     ImGui::End();
@@ -900,9 +956,9 @@ static void ShowAbout(bool* open) {
     ImGui::Text("Build:    %s %s", __DATE__, __TIME__);
     ImGui::Separator();
     ImGui::TextUnformatted("Architecture:");
-    ImGui::BulletText("Service Layer  ? raid_service (unified API)");
-    ImGui::BulletText("Manager Layer ? device/volume/metadata/planner/event");
-    ImGui::BulletText("Engine Layer  ? stripe/mirror/cache/journal");
+    ImGui::BulletText("Service Layer  -- raid_service (unified API)");
+    ImGui::BulletText("Manager Layer -- device/volume/metadata/planner/event");
+    ImGui::BulletText("Engine Layer  -- stripe/mirror/cache/journal");
     ImGui::Separator();
     ImGui::TextUnformatted("Framework: Dear ImGui v1.92.8 + DirectX 11");
     ImGui::TextUnformatted("Backend:   WinFsp FUSE + MinGW-w64");
@@ -1048,6 +1104,7 @@ static void RenderMainUI(void) {
 
         ImGui::BeginChild("##right", ImVec2(0, mid_h), true);
         ShowVolumeInfo();
+        ShowPerformancePanel();
         ImGui::EndChild();
     }
 
@@ -1169,6 +1226,7 @@ extern "C" int gui_run(void) {
             refresh_ui_model();
             g_gui.last_refresh = now;
         }
+        profiler_update_rates(g_gui.vol_info.bytes_read, g_gui.vol_info.bytes_written);
 
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();

@@ -100,7 +100,7 @@ int main(int argc, char* argv[]) {
 
     if (argc > 1) {
         if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
-            printf("RAIDTEST v3.0 (build %s %s)\n", __DATE__, __TIME__);
+            printf("RAIDTEST v1.0 RC2 (build %s %s)\n", __DATE__, __TIME__);
             printf("Asymmetric Stripe RAID 0 Engine\n");
             printf("WinFsp FUSE + MinGW-w64\n");
             log_cleanup();

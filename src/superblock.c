@@ -116,7 +116,7 @@ bool superblock_write(STRIPE_VOLUME* vol) {
         if (h == INVALID_HANDLE_VALUE) continue;
 
         DWORD written = 0;
-        BOOL ok = WriteFile(h, &sb, sizeof(sb), &written, NULL);
+        BOOL ok = WriteFile(h, &sb, sizeof(sb), &written, NULL) && written == sizeof(sb);
         if (ok) ok = FlushFileBuffers(h);
         CloseHandle(h);
 

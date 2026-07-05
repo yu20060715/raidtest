@@ -1,5 +1,7 @@
 #pragma once
+#ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0A00
+#endif
 #include <windows.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -13,6 +15,26 @@
 extern CRITICAL_SECTION g_state_cs;
 static inline void gs_lock(void)   { EnterCriticalSection(&g_state_cs); }
 static inline void gs_unlock(void) { LeaveCriticalSection(&g_state_cs); }
+
+#include <errno.h>
+static inline bool safe_atou32(const char* s, uint32_t* out) {
+    if (!s || !out) return false;
+    char* end = NULL;
+    errno = 0;
+    unsigned long val = strtoul(s, &end, 10);
+    if (errno != 0 || end == s || *end != '\0' || val > UINT32_MAX) return false;
+    *out = (uint32_t)val;
+    return true;
+}
+static inline bool safe_atou64(const char* s, uint64_t* out) {
+    if (!s || !out) return false;
+    char* end = NULL;
+    errno = 0;
+    unsigned long long val = strtoull(s, &end, 10);
+    if (errno != 0 || end == s || *end != '\0') return false;
+    *out = val;
+    return true;
+}
 
 #define SECTOR_SIZE         512
 #define DEFAULT_STRIPE_UNIT (1024 * 1024)
@@ -90,6 +112,16 @@ static inline uint32_t gcd_u32(uint32_t a, uint32_t b) {
     while (b) { uint32_t t = b; b = a % b; a = t; }
     return a;
 }
+
+static inline RC validate_pool_size(uint64_t size_bytes) {
+    if (size_bytes == 0) return RC_ERR_INVALID_ARG;
+    if (size_bytes < SECTOR_SIZE) return RC_ERR_INVALID_ARG;
+    uint64_t sector_count = size_bytes / SECTOR_SIZE;
+    if (sector_count == 0) return RC_ERR_INVALID_ARG;
+    return RC_OK;
+}
+
+#define CHECK_HANDLE(h, label) do { if (!(h)) { LOG_ERROR("Handle allocation failed"); goto label; } } while(0)
 
 #pragma pack(push, 1)
 typedef struct {

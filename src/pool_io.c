@@ -6,6 +6,11 @@ static bool is_sector_aligned(uint64_t value, uint32_t sector_size) {
 
 bool pool_file_create(DISK_INFO* disk, uint64_t size_bytes) {
     if (!disk || !disk->file_path[0]) return false;
+    if (validate_pool_size(size_bytes) != RC_OK) {
+        LOG_ERROR("Reject pool create: invalid size %llu bytes for %ls",
+                  (unsigned long long)size_bytes, disk->file_path);
+        return false;
+    }
     if (!is_sector_aligned(size_bytes, SECTOR_SIZE)) {
         LOG_WARN("Pool size %llu not aligned to sector size %u, adjusting",
                  (unsigned long long)size_bytes, (unsigned int)SECTOR_SIZE);
