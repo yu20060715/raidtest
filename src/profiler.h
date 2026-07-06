@@ -5,7 +5,7 @@
 
 typedef struct {
     double start_time;
-    bool   active;
+    volatile LONG active;
 } IO_SAMPLE;
 
 typedef struct {

@@ -128,11 +128,45 @@ static void try_recover_orphan_tmp(const wchar_t* drive_root) {
     wchar_t tmp_path[MAX_DRIVE_PATH], final_path[MAX_DRIVE_PATH];
     StringCchPrintfW(tmp_path, MAX_DRIVE_PATH, L"%ls%s\\%ls.tmp", drive_root, CONFIG_DIR, SUPERBLOCK_FILENAME);
     StringCchPrintfW(final_path, MAX_DRIVE_PATH, L"%ls%s\\%ls", drive_root, CONFIG_DIR, SUPERBLOCK_FILENAME);
+
     HANDLE h = CreateFileW(tmp_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+
+    SUPERBLOCK tmp_sb;
+    DWORD read = 0;
+    BOOL ok = ReadFile(h, &tmp_sb, sizeof(tmp_sb), &read, NULL);
+    CloseHandle(h);
+    if (!ok || read < sizeof(SUPERBLOCK)) { DeleteFileW(tmp_path); return; }
+    if (tmp_sb.magic != SUPERBLOCK_MAGIC || tmp_sb.version < 4) { DeleteFileW(tmp_path); return; }
+
+    uint32_t saved_cs = tmp_sb.checksum;
+    tmp_sb.checksum = 0;
+    uint32_t actual = crc32((const uint8_t*)&tmp_sb, offsetof(SUPERBLOCK, checksum));
+    if (actual != saved_cs) { DeleteFileW(tmp_path); return; }
+    tmp_sb.checksum = saved_cs;
+
+    uint64_t tmp_gen = tmp_sb.generation;
+
+    h = CreateFileW(final_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    uint64_t dat_gen = 0;
     if (h != INVALID_HANDLE_VALUE) {
+        SUPERBLOCK dat_sb;
+        DWORD dat_read = 0;
+        if (ReadFile(h, &dat_sb, sizeof(dat_sb), &dat_read, NULL) && dat_read >= sizeof(SUPERBLOCK)) {
+            uint32_t ds = dat_sb.checksum;
+            dat_sb.checksum = 0;
+            if (dat_sb.magic == SUPERBLOCK_MAGIC && crc32((const uint8_t*)&dat_sb, offsetof(SUPERBLOCK, checksum)) == ds)
+                dat_gen = dat_sb.generation;
+        }
         CloseHandle(h);
-        LOG_WARN("Recovering orphan superblock.tmp on %ls", drive_root);
+    }
+
+    if (tmp_gen > dat_gen) {
+        LOG_WARN("Recovering orphan superblock.tmp on %ls (gen %llu > %llu)",
+                 drive_root, (unsigned long long)tmp_gen, (unsigned long long)dat_gen);
         MoveFileExW(tmp_path, final_path, MOVEFILE_REPLACE_EXISTING);
+    } else {
+        DeleteFileW(tmp_path);
     }
 }
 

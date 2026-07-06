@@ -498,8 +498,8 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
     }
     if (vol->cache_enabled && !vol->cache_flush_in_progress &&
         virtual_offset + length <= vol->cache.cache_size_bytes) {
-        bool ok = cache_write(&vol->cache, buffer, virtual_offset, length);
-        if (ok && vol->cache.write_through) {
+        bool ok = false;
+        if (vol->cache.write_through) {
             IO_MAPPING_ENTRY entries[MAX_IO_ENTRIES];
             uint32_t entry_count = 0;
             if (stripe_volume_map_lba(vol, virtual_offset, entries, &entry_count, length)) {
@@ -544,9 +544,12 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
                     for (uint32_t i = 0; i < entry_count; i++) {
                         if (events[i]) { CancelIoEx(vol->disks[entries[i].disk_index]->handle, &ovs[i]); CloseHandle(events[i]); }
                     }
-                    ok = false;
+                } else {
+                    ok = cache_write(&vol->cache, buffer, virtual_offset, length);
                 }
             }
+        } else {
+            ok = cache_write(&vol->cache, buffer, virtual_offset, length);
         }
         if (ok) vol->bytes_written += length;
         profiler_write_end(ps, ok ? length : 0);

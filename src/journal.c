@@ -101,12 +101,15 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) continue;
 
-        uint8_t raw[65536];
+        LARGE_INTEGER file_size;
+        if (!GetFileSizeEx(h, &file_size) || file_size.QuadPart == 0) { CloseHandle(h); continue; }
+        uint8_t* raw = (uint8_t*)malloc((size_t)file_size.QuadPart);
+        if (!raw) { CloseHandle(h); continue; }
         DWORD read = 0;
-        if (!ReadFile(h, raw, sizeof(raw), &read, NULL)) { CloseHandle(h); continue; }
+        if (!ReadFile(h, raw, (DWORD)file_size.QuadPart, &read, NULL)) { free(raw); CloseHandle(h); continue; }
         CloseHandle(h);
 
-        if (read < sizeof(JOURNAL_ENTRY)) continue;
+        if (read < sizeof(JOURNAL_ENTRY)) { free(raw); continue; }
 
         uint32_t offset = 0;
         bool has_begin = false;
@@ -177,6 +180,7 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
         h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        free(raw);
     }
 
     return all_clean;

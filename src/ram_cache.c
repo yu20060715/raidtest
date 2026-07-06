@@ -10,10 +10,13 @@ bool cache_init(RAM_CACHE* cache, uint64_t size_bytes) {
     cache->cache_size_bytes = size_bytes;
     cache->buffer = (uint8_t*)VirtualAlloc(NULL, size_bytes, MEM_COMMIT, PAGE_READWRITE);
     if (!cache->buffer) return false;
-    uint32_t dirty_bytes = (cache->block_count + 7) / 8;
-    cache->dirty_map = (uint8_t*)malloc(dirty_bytes);
+    uint32_t bitmap_bytes = (cache->block_count + 7) / 8;
+    cache->dirty_map = (uint8_t*)malloc(bitmap_bytes);
     if (!cache->dirty_map) { VirtualFree(cache->buffer, 0, MEM_RELEASE); cache->buffer = NULL; return false; }
-    memset(cache->dirty_map, 0, dirty_bytes);
+    memset(cache->dirty_map, 0, bitmap_bytes);
+    cache->valid_map = (uint8_t*)malloc(bitmap_bytes);
+    if (!cache->valid_map) { free(cache->dirty_map); VirtualFree(cache->buffer, 0, MEM_RELEASE); return false; }
+    memset(cache->valid_map, 0, bitmap_bytes);
     cache->hit_count = 0;
     cache->miss_count = 0;
     cache->running = 1;
@@ -39,6 +42,7 @@ void cache_destroy(RAM_CACHE* cache) {
         cache->flush_thread = NULL;
     }
     if (cache->dirty_map) free(cache->dirty_map);
+    if (cache->valid_map) free(cache->valid_map);
     if (cache->flush_buffer) VirtualFree(cache->flush_buffer, 0, MEM_RELEASE);
     VirtualFree(cache->buffer, 0, MEM_RELEASE);
     DeleteCriticalSection(&cache->lock);
@@ -53,8 +57,10 @@ bool cache_write(RAM_CACHE* cache, const void* data, uint64_t offset, uint32_t l
     memcpy(cache->buffer + offset, data, length);
     uint64_t start_block = offset / cache->block_size;
     uint64_t end_block = (end + cache->block_size - 1) / cache->block_size;
-    for (uint64_t b = start_block; b < end_block && b < cache->block_count; b++)
+    for (uint64_t b = start_block; b < end_block && b < cache->block_count; b++) {
         cache->dirty_map[b / 8] |= (1 << (b % 8));
+        cache->valid_map[b / 8] |= (1 << (b % 8));
+    }
     LeaveCriticalSection(&cache->lock);
     return true;
 }
@@ -64,6 +70,13 @@ bool cache_read(RAM_CACHE* cache, void* data, uint64_t offset, uint32_t length) 
     uint64_t end = offset + length;
     if (length == 0 || end < offset || end > cache->cache_size_bytes) return false;
     EnterCriticalSection(&cache->lock);
+    uint64_t start_block = offset / cache->block_size;
+    uint64_t end_block = (end + cache->block_size - 1) / cache->block_size;
+    bool all_valid = true;
+    for (uint64_t b = start_block; b < end_block && b < cache->block_count; b++) {
+        if (!(cache->valid_map[b / 8] & (1 << (b % 8)))) { all_valid = false; break; }
+    }
+    if (!all_valid) { cache->miss_count++; LeaveCriticalSection(&cache->lock); return false; }
     memcpy(data, cache->buffer + offset, length);
     cache->hit_count++;
     LeaveCriticalSection(&cache->lock);

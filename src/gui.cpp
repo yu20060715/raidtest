@@ -35,6 +35,7 @@ enum WorkerAction {
     W_REFRESH,
     W_BENCH,
     W_EXPORT,
+    W_PURGE,
 };
 
 static struct {
@@ -55,13 +56,14 @@ static struct {
     char                    worker_result[512];
     volatile LONG           worker_done;
     char                    progress_text[64];
-    float                   progress_frac;
+    volatile float          progress_frac;
     volatile LONG           worker_pct;
 
     UI_DISK_SUMMARY         disk_summary;
     UI_VOLUME_INFO          vol_info;
     UI_HEALTH_SUMMARY       health;
     double                  last_refresh;
+    volatile LONG           refresh_pending;
     int                     selected_disks[8];
     int                     selected_count;
     int                     disk_checked[64];
@@ -105,6 +107,7 @@ static void event_cb(EVENT_TYPE type, const char* data, void* userdata) {
     const char* t = event_type_str(type);
     snprintf(buf, sizeof(buf), "[%s] %s", t ? t : "EVENT", data ? data : "");
     gui_log(buf);
+    InterlockedExchange(&g_gui.refresh_pending, 1);
 }
 
 static void refresh_ui_model(void) {
@@ -351,6 +354,15 @@ static unsigned int __stdcall worker_thread(void* arg) {
         g_gui.progress_frac = 1.0f;
         snprintf(result, 511, "Export saved to: %s", dir);
         snprintf(g_gui.export_result, 511, "Diagnostics exported to:\n%s\n\nFiles:\n  metadata.txt\n  event.log\n  system.txt", dir);
+        break;
+    }
+    case W_PURGE: {
+        strncpy(g_gui.progress_text, "Purging metadata...", 63);
+        g_gui.progress_frac = 0.5f;
+        RC rc = raid_purge();
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Purge: %s", rc == RC_OK ? "OK" : "FAILED");
+        refresh_ui_model();
         break;
     }
     default:
@@ -621,7 +633,7 @@ static void ShowToolbar(void) {
         if (ImGui::InputText("##ml", ml, 2, ImGuiInputTextFlags_CharsUppercase))
             g_gui.mount_letter = ml[0];
         ImGui::SameLine();
-        ImGui::TextUnformatted("Cache:");
+        ImGui::TextUnformatted("Pool:");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(55);
         ImGui::InputInt("##cache", &g_gui.cache_mb, 0);
@@ -732,7 +744,7 @@ static void ShowPlanner(void) {
                 DISK_INFO* d = device_get(g_gui.selected_disks[i]);
                 if (!d) continue;
                 pdisks[i].disk_index = g_gui.selected_disks[i];
-                pdisks[i].capacity_bytes = d->total_bytes;
+                pdisks[i].capacity_bytes = d->pool_bytes > 0 ? d->pool_bytes : d->total_bytes;
                 pdisks[i].speed_mbs = d->benchmarked ? d->bench_write_mbs : d->write_speed_mbs;
                 pdisks[i].selected = true;
                 char* sn = pdisks[i].serial;
@@ -1001,6 +1013,7 @@ static void ShowConfirmPurge(void) {
         ImGui::TextColored(ImVec4(1,1,0,1), "This may make the volume unrecoverable.");
         ImGui::Separator();
         if (ImGui::Button("Yes, Purge", ImVec2(120, 0))) {
+            start_worker(W_PURGE, NULL);
             g_gui.show_confirm_purge = false;
             ImGui::CloseCurrentPopup();
         }
@@ -1220,6 +1233,9 @@ extern "C" int gui_run(void) {
         }
 
         check_worker_done();
+
+        if (InterlockedCompareExchange(&g_gui.refresh_pending, 0, 1) == 1)
+            refresh_ui_model();
 
         double now = ImGui::GetTime();
         if (now - g_gui.last_refresh > 1.0) {

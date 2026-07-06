@@ -45,6 +45,20 @@ void event_bus_subscribe(EVENT_TYPE type, event_callback cb, void* userdata) {
     LeaveCriticalSection(&g_eb_cs);
 }
 
+void event_bus_unsubscribe(EVENT_TYPE type, event_callback cb) {
+    if (!g_eb_inited || !cb || type >= EVENT_COUNT) return;
+    EnterCriticalSection(&g_eb_cs);
+    for (int i = 0; i < MAX_SUBSCRIBERS_PER_EVENT; i++) {
+        if (g_subs[type][i].active && g_subs[type][i].cb == cb) {
+            g_subs[type][i].active = false;
+            g_subs[type][i].cb = NULL;
+            g_subs[type][i].userdata = NULL;
+            break;
+        }
+    }
+    LeaveCriticalSection(&g_eb_cs);
+}
+
 void event_bus_publish(EVENT_TYPE type, const char* data) {
     if (!g_eb_inited || type >= EVENT_COUNT) return;
     EnterCriticalSection(&g_eb_cs);

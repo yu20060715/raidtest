@@ -238,6 +238,7 @@ typedef struct {
     uint32_t  block_size;
     uint32_t  block_count;
     uint8_t*  dirty_map;
+    uint8_t*  valid_map;
     uint64_t  hit_count;
     uint64_t  miss_count;
     HANDLE    flush_thread;

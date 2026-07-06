@@ -25,7 +25,7 @@ static double now_ms(void) {
 
 static int find_free_slot(void) {
     for (int i = 0; i < 8; i++)
-        if (!g_profiler.samples[i].active) return i;
+        if (InterlockedCompareExchange(&g_profiler.samples[i].active, 1, 0) == 0) return i;
     return -1;
 }
 

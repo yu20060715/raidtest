@@ -156,6 +156,10 @@ bool mirror_volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO* replacement, uint32_t 
             LOG_ERROR("Rebuild: write failed at offset %llu", (unsigned long long)offset);
             ok = false; break;
         }
+        if (!FlushFileBuffers(replacement->handle)) {
+            LOG_ERROR("Rebuild: flush failed at offset %llu", (unsigned long long)offset);
+            ok = false; break;
+        }
         offset += chunk;
     }
 
