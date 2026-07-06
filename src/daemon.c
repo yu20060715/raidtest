@@ -144,7 +144,8 @@ static bool daemon_load_volume(APP_STATE* state) {
 
 /* ---- Core daemon/service logic ---- */
 static DWORD daemon_run(APP_STATE* state, HANDLE stop_ev) {
-    if (!daemon_load_volume(state)) return 1;
+    gs_lock();
+    if (!daemon_load_volume(state)) { gs_unlock(); return 1; }
 
     /* Mount if valid */
     if (state->vol.volume_valid && state->vol.volume.mount_point[0]) {
@@ -153,6 +154,7 @@ static DWORD daemon_run(APP_STATE* state, HANDLE stop_ev) {
             LOG_OK("Daemon: mounted at %c:", state->vol.volume.mount_point[0]);
         }
     }
+    gs_unlock();
 
     LOG_OK("RAIDTEST daemon running. Send 'exit' or press Ctrl+C to stop.");
 
@@ -182,7 +184,8 @@ static DWORD WINAPI daemon_main(LPVOID arg) {
     HANDLE stop_ev = g_daemon_stop;
 
     /* Load volume from superblock (single metadata source) */
-    if (!daemon_load_volume(state)) { log_cleanup(); return 1; }
+    gs_lock();
+    if (!daemon_load_volume(state)) { gs_unlock(); log_cleanup(); return 1; }
 
     /* Apply runtime prefs from JSON (mount letter, cache size override) */
     APP_CONFIG cfg;
@@ -197,6 +200,7 @@ static DWORD WINAPI daemon_main(LPVOID arg) {
             LOG_OK("Daemon: mounted at %c:", mount);
         }
     }
+    gs_unlock();
 
     LOG_OK("RAIDTEST daemon running. Send 'exit' or press Ctrl+C to stop.");
 

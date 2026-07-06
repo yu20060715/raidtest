@@ -42,6 +42,8 @@ static RC cmd_bench(int argc, char* argv[]) { return raid_bench(argc, argv); }
 
 static RC cmd_init(int argc, char* argv[]) { return raid_init_pools(argc, argv); }
 
+static RC cmd_select(int argc, char* argv[]) { return raid_select(argc, argv); }
+
 static RC cmd_create(void) { return raid_create(); }
 
 static RC cmd_expand(int argc, char* argv[]) { return raid_expand(argc, argv); }
@@ -207,12 +209,13 @@ bool cmd_process(const char* input) {
     if (argc == 0) return true;
 
     RC rc = RC_OK;
-    if (strcmp(args[0], "exit") == 0 || strcmp(args[0], "quit") == 0) return false;
+    gs_lock();
+    if (strcmp(args[0], "exit") == 0 || strcmp(args[0], "quit") == 0) { gs_unlock(); return false; }
     else if (strcmp(args[0], "help") == 0) { cmd_help(); }
     else if (strcmp(args[0], "scan") == 0) rc = cmd_scan();
     else if (strcmp(args[0], "mapdrive") == 0) rc = cmd_mapdrive(argc - 1, args + 1);
     else if (strcmp(args[0], "bench") == 0) rc = cmd_bench(argc - 1, args + 1);
-    else if (strcmp(args[0], "select") == 0) rc = cmd_init(argc - 1, args + 1);
+    else if (strcmp(args[0], "select") == 0) rc = cmd_select(argc - 1, args + 1);
     else if (strcmp(args[0], "init") == 0) rc = cmd_init(argc - 1, args + 1);
     else if (strcmp(args[0], "create") == 0) rc = cmd_create();
     else if (strcmp(args[0], "mirror") == 0) rc = cmd_mirror();
@@ -244,6 +247,7 @@ bool cmd_process(const char* input) {
 
     if (rc != RC_OK && rc != RC_ERR_ROLLBACK)
         LOG_WARN("Command failed: %s", rc_str(rc));
+    gs_unlock();
     return true;
 }
 
@@ -258,5 +262,5 @@ void cmd_interactive(void) {
         if (!cmd_process(input)) break;
     }
     LOG_INFO("Shutting down...");
-    raid_cleanup();
+    gs_lock(); raid_cleanup(); gs_unlock();
 }

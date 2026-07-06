@@ -295,6 +295,8 @@ RC raid_create(void) {
     if (!volume_create(&S()->vol.volume, S()->disk.disks, S()->disk.disk_count)) return RC_ERR_IO;
     S()->vol.volume_valid = true;
     S()->rt.state = STATE_MOUNTED;
+    S()->cache.cache_on = false;
+    S()->cache.flush_thread = NULL;
     return RC_OK;
 }
 
@@ -304,6 +306,8 @@ RC raid_mirror(void) {
     if (!volume_mirror(&S()->vol.volume, S()->disk.disks, S()->disk.disk_count)) return RC_ERR_IO;
     S()->vol.volume_valid = true;
     S()->rt.state = STATE_MOUNTED;
+    S()->cache.cache_on = false;
+    S()->cache.flush_thread = NULL;
     return RC_OK;
 }
 

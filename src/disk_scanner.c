@@ -104,14 +104,23 @@ bool disk_scan_all(DISK_INFO*** out_disks, uint32_t* out_count) {
 
     *out_disks = (DISK_INFO**)malloc(count * sizeof(DISK_INFO*));
     if (!*out_disks) { free(disks); return false; }
-    for (uint32_t i = 0; i < count; i++) (*out_disks)[i] = &disks[i];
+    for (uint32_t i = 0; i < count; i++) {
+        (*out_disks)[i] = (DISK_INFO*)malloc(sizeof(DISK_INFO));
+        if (!(*out_disks)[i]) {
+            for (uint32_t j = 0; j < i; j++) free((*out_disks)[j]);
+            free(*out_disks); *out_disks = NULL;
+            free(disks); return false;
+        }
+        memcpy((*out_disks)[i], &disks[i], sizeof(DISK_INFO));
+    }
+    free(disks);
     *out_count = count;
     return count > 0;
 }
 
 void disk_scan_free(DISK_INFO** disks, uint32_t count) {
     if (!disks) return;
-    if (count > 0 && disks[0]) free(disks[0]);
+    for (uint32_t i = 0; i < count; i++) free(disks[i]);
     free(disks);
 }
 
