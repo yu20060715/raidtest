@@ -11,10 +11,15 @@ bool config_get_path(wchar_t* path, uint32_t max_len) {
 void config_defaults(APP_CONFIG* cfg) {
     if (!cfg) return;
     memset(cfg, 0, sizeof(APP_CONFIG));
-    cfg->version = 1;
+    cfg->version = 2;
     cfg->cache_mb = CACHE_DEFAULT_MB;
     cfg->mount_letter = 'G';
     cfg->auto_bench = true;
+    cfg->theme = THEME_DARK;
+    strcpy(cfg->language, "en");
+    cfg->auto_restore = true;
+    cfg->auto_mount = true;
+    cfg->first_run = true;
 }
 
 bool config_save(APP_CONFIG* cfg) {
@@ -34,6 +39,11 @@ bool config_save(APP_CONFIG* cfg) {
     fwprintf(f, L"  \"cache_mb\": %u,\n", cfg->cache_mb);
     fwprintf(f, L"  \"mount_letter\": \"%c\",\n", cfg->mount_letter);
     fwprintf(f, L"  \"auto_bench\": %ls,\n", cfg->auto_bench ? L"true" : L"false");
+    fwprintf(f, L"  \"theme\": %d,\n", cfg->theme);
+    fwprintf(f, L"  \"language\": \"%hs\",\n", cfg->language);
+    fwprintf(f, L"  \"auto_restore\": %ls,\n", cfg->auto_restore ? L"true" : L"false");
+    fwprintf(f, L"  \"auto_mount\": %ls,\n", cfg->auto_mount ? L"true" : L"false");
+    fwprintf(f, L"  \"first_run\": %ls,\n", cfg->first_run ? L"true" : L"false");
     fwprintf(f, L"  \"disks\": [\n");
     for (uint32_t i = 0; i < cfg->disk_count; i++) {
         fwprintf(f, L"    {\"id\": %u, \"drive\": \"%c\", \"pool_mb\": %llu}%s\n",
@@ -72,6 +82,11 @@ bool config_load(APP_CONFIG* cfg) {
         else if (wcsstr(p, L"\"cache_mb\":")) { int v; if (swscanf(p, L" \"cache_mb\": %d,", &v) >= 1) { cfg->cache_mb = (uint32_t)v; parsed = true; } }
         else if (wcsstr(p, L"\"mount_letter\":")) { char c; if (swscanf(p, L" \"mount_letter\": \"%c\",", &c) >= 1) { cfg->mount_letter = c; parsed = true; } }
         else if (wcsstr(p, L"\"auto_bench\":")) { cfg->auto_bench = (wcsstr(p, L"true") != NULL); parsed = true; }
+        else if (wcsstr(p, L"\"theme\":")) { int v; if (swscanf(p, L" \"theme\": %d", &v) >= 1) { cfg->theme = v; parsed = true; } }
+        else if (wcsstr(p, L"\"language\":")) { char lang[8] = {0}; if (swscanf(p, L" \"language\": \"%[^\"]\",", lang) >= 1) { strcpy(cfg->language, lang); parsed = true; } }
+        else if (wcsstr(p, L"\"auto_restore\":")) { cfg->auto_restore = (wcsstr(p, L"true") != NULL); parsed = true; }
+        else if (wcsstr(p, L"\"auto_mount\":")) { cfg->auto_mount = (wcsstr(p, L"true") != NULL); parsed = true; }
+        else if (wcsstr(p, L"\"first_run\":")) { cfg->first_run = (wcsstr(p, L"true") != NULL); parsed = true; }
         else if (wcsstr(p, L"\"id\":")) {
             if (cfg->disk_count < MAX_DISKS) {
                 int id, drive;

@@ -278,6 +278,8 @@ typedef struct {
     uint64_t pool_mb;
 } DISK_CONFIG;
 
+typedef enum { THEME_DARK = 0, THEME_LIGHT } APP_THEME;
+
 typedef struct {
     uint32_t   version;
     DISK_CONFIG disks[MAX_DISKS];
@@ -285,4 +287,9 @@ typedef struct {
     uint32_t   cache_mb;
     char       mount_letter;
     bool       auto_bench;
+    int        theme;
+    char       language[8];
+    bool       auto_restore;
+    bool       auto_mount;
+    bool       first_run;
 } APP_CONFIG;

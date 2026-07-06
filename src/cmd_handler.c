@@ -21,8 +21,8 @@ void cmd_print_banner(void) {
     printf("\n");
     printf("  ==============================================\n");
     printf("    RAIDTEST v1.0 RC2 - Asymmetric Stripe Engine\n");
-    printf("    Non-撖寧妍敹急瘛瑟 RAID 0 ?撘?\n");
-    printf("    ?舀: SATA SSD + NVMe SSD ?芰瘛瑟\n");
+    printf("    Virtual RAID 0 across mixed-speed physical disks\n");
+    printf("    Supports: SATA SSD + NVMe SSD + HDD mixed arrays\n");
     printf("  ==============================================\n");
     printf("\n");
 }
@@ -106,49 +106,49 @@ static RC cmd_config_load(void) { return raid_config_load(); }
 
 static RC cmd_quick(void) { return raid_quick(); }
 
-/* ---- Help (unchanged, still Chinese) ---- */
+/* ---- Help (English) ---- */
 static void cmd_help(void) {
     cmd_print_banner();
     printf("  COMMANDS:\n");
-    printf("    scan                         ???祕擃?SSD\n");
-    printf("    mapdrive <id> <driver>       蝬?蝤??唳局??(靘? mapdrive 0 F)\n");
-    printf("    select <id1> <id2> ...       蝑? 'init id1 id2 ...' (?豢?+撱箇? pool)\n");
-    printf("    bench [sizeMB]               撠銝剔?蝣??祕皜祇?(?身 512MB)\n");
-    printf("    init [id...|id:mb...]         撱箇? pool 瑼? (靘? init 0 2, init 0:25600 3:51200)\n");
-    printf("    create                       撱箇???蝔望?撣嗅??蝤? (RAID0)\n");
-    printf("    mirror                       撱箇??∪??蝤? (RAID1)\n");
-    printf("    rebuild <idx> <disk> [MB]    ?湔????∪?蝤?銝阡?撱箄??n");
-    printf("    cache [sizeMB]               ? RAM Write-back 敹怠? (?身 %u MB)\n", CACHE_DEFAULT_MB);
-    printf("    cache wt                     ?? Write-through 璅∪? (?活頛詨?? Write-back)\n");
-    printf("    cache off                    ?敹怠?銝血??蝣n");
-    printf("    mount [隞??]                  ????Windows 蝤?璈?(? WinFsp)\n");
-    printf("    unmount                      ?貉?蝤?璈?(靽? pool 瑼?嚗??load 頛)\n");
-    printf("    load                         敺?superblock ?頛 volume (靽?銝活鞈?)\n");
-    printf("    purge                        ?芷 pool 瑼? + superblock (摰皜)\n");
-    printf("    test                         ?瑁? IO 撽? (撖怠+霈??瘥?)\n");
-    printf("    benchfs [sizeMB] [blockKB]   ?湔撠???霈撖急葫??(??CDM)\n");
-    printf("    cleanup                      皜????pool 瑼????冗?身摰n");
-    printf("    wizard                       鈭?蝎暸?: 撘?撘身摰???\n");
-    printf("    config-save                  ?脣??桀?閮剖???JSON\n");
-    printf("    config-load                  頛銝活?脣??身摰n");
-    printf("    quick                        敹恍身摰? scan+?貊+init+create+cache+mount\n");
-    printf("    info                         憿舐內?蝤?鞈? (??cache dirty ratio)\n");
-    printf("    map                          憿舐內 LBA ??銵?(??64MB)\n");
-    printf("    random <ops> [maxKB]         ?冽? I/O 憯?皜祈岫 (撖怠+霈??瘥?)\n");
-    printf("    destroy                      皜 volume (unmount + ?芷 pool/superblock/journal)\n");
-    printf("    metadata [隞??]               憿舐內 superblock ??n");
-    printf("    check                        ?亙熒瑼Ｘ: 撽????蝣? superblock\n");
-    printf("    simulate <idx> <f|h|d>       璅⊥蝤???/敺拙?/?瑞?\n");
-    printf("    planner                      摰寥?閬?: 憿舐內??RAID 蝝?舐摰寥?\n");
-    printf("    events                       憿舐內鈭辣?亥?\n");
-    printf("    status                       ?單????\n");
-    printf("    help                         憿舐內隤芣?\n");
-    printf("    exit                         ?ａ?\n");
+    printf("    scan                         Scan physical disks + auto-benchmark\n");
+    printf("    mapdrive <id> <letter>       Assign drive letter to a disk\n");
+    printf("    select <id1> <id2> ...       Select disks for RAID\n");
+    printf("    bench [sizeMB]               Benchmark selected disks (default 512 MB)\n");
+    printf("    init [id...|id:mb...]         Create pool files (e.g. init 0 2, init 0:25600 3:51200)\n");
+    printf("    create                       Create RAID0 stripe volume\n");
+    printf("    mirror                       Create RAID1 mirror volume\n");
+    printf("    rebuild <idx> <disk> [MB]    Replace failed mirror disk and rebuild\n");
+    printf("    cache [sizeMB]               Enable RAM write-back cache (default %u MB)\n", CACHE_DEFAULT_MB);
+    printf("    cache wt                     Toggle write-through mode (only if cache enabled)\n");
+    printf("    cache off                    Disable cache and flush to disk\n");
+    printf("    mount [drive letter]         Mount volume to a drive letter via WinFsp\n");
+    printf("    unmount                      Unmount volume (pool files preserved for 'load')\n");
+    printf("    load                         Restore volume from on-disk superblock\n");
+    printf("    purge                        Delete pool files + superblock (irreversible)\n");
+    printf("    test                         Run I/O verification (write + read + verify)\n");
+    printf("    benchfs [sizeMB] [blockKB]   Filesystem-level benchmark (like CrystalDiskMark)\n");
+    printf("    cleanup                      Release all RAID resources\n");
+    printf("    wizard                       Guided 8-step setup wizard\n");
+    printf("    config-save                  Save current configuration to JSON\n");
+    printf("    config-load                  Load configuration from JSON\n");
+    printf("    quick                        All-in-one: scan + bench + select + init + create + cache + mount\n");
+    printf("    info                         Display volume info (capacity, cache, stripe phases)\n");
+    printf("    map                          Display LBA to disk mapping table\n");
+    printf("    random <ops> [maxKB]         Random I/O stress test (write + read + verify)\n");
+    printf("    destroy                      Unmount + delete all pool/superblock/journal files\n");
+    printf("    metadata [drive]             Dump superblock contents\n");
+    printf("    check                        Full health check: disks + pool files + superblock\n");
+    printf("    simulate <idx> <f|h|d>       Simulate disk failure/healthy/disconnect\n");
+    printf("    planner                      RAID capacity and efficiency calculator\n");
+    printf("    events                       Browse event history log\n");
+    printf("    status                       Live status dashboard\n");
+    printf("    help                         Show this help\n");
+    printf("    exit                         Exit the program\n");
     printf("\n");
     printf("  QUICK START:\n");
-    printf("    quick               ->  scan + bench + select + init + mount (all-in-one)\n");
+    printf("    quick               ->  scan + bench + select + init + cache + mount (all-in-one)\n");
     printf("    scan; select...     ->  manual step-by-step\n");
-    printf("    (no args)           ->  auto-restore from config, or enter quick mode\n");
+    printf("    (no args)           ->  auto-restore from config, or quick mode\n");
     printf("\n");
 }
 

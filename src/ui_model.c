@@ -41,6 +41,7 @@ void ui_get_volume_info(UI_VOLUME_INFO* out) {
         LeaveCriticalSection(&vol->cache.lock);
         out->cache_dirty_pct = (double)dirty / vol->cache.block_count * 100.0;
     }
+    memcpy(out->mount_point, vol->mount_point, 4);
     out->bytes_written = vol->bytes_written;
     out->bytes_read = vol->bytes_read;
     LARGE_INTEGER now, freq;

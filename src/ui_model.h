@@ -22,6 +22,7 @@ typedef struct {
     uint64_t  bytes_written;
     uint64_t  bytes_read;
     double    uptime_seconds;
+    char      mount_point[4];
 } UI_VOLUME_INFO;
 
 typedef struct {

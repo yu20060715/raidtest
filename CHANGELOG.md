@@ -4,25 +4,109 @@ All notable changes to RAIDTEST are documented here.
 
 ---
 
-## v1.0 RC1 (In Progress) — Release Candidate
+## v1.0 RC4 (2026-07-06) — Release Candidate 4
+
+### Added (8 Features)
+- **Settings Window** (`ShowSettings`) — drive letter, cache size (min 256 MB), Dark/Light theme, auto restore/mount, Save/Cancel. Persisted via `config_save()` to `%APPDATA%\RAIDTEST\config.json`. (`src/gui.cpp:866-901`)
+- **Toast Notifications** (`toast_push`/`render_toasts`) — 8-slot FIFO queue, 5-second duration, color-coded (OK=green, WARN=yellow, ERROR=red, INFO=blue), rendered on foreground draw list. (`src/gui.cpp:161-206`)
+- **Progress System with ETA/Cancel** — worker thread reports `progress_text`, `progress_step`, `progress_frac` (0.0–1.0), `progress_start_time`, ETA calculation. Cancel via `InterlockedExchange`. (`src/gui.cpp:264-697`, `715-738`)
+- **Health Dashboard (Cards)** — 4-column card layout, model/status/capacity/speed per disk, green/red tint backgrounds. Temp/SMART placeholders. (`src/gui.cpp:903-945`)
+- **Performance Dashboard (Charts)** — 1-second IO_PROFILER sampling, 120-sample `PerfSample` history, `PlotLines` for R/W throughput and latency, current values display. (`src/gui.cpp:947-1001`)
+- **Diagnostics Export ZIP** — exports `metadata.txt`, `event.log`, `system.txt` via PowerShell `Compress-Archive`. Result dialog with path. (`src/gui.cpp:387-476`)
+- **Enhanced About Window** — version, build date/time, compiler detection (GCC/MSVC), architecture, libraries (ImGui 1.91 DX11, WinFsp 2.1, DirectX 11 / MinGW-w64), MIT license. (`src/gui.cpp:1003-1026`)
+- **First-Run Welcome Wizard** — modal popup on first launch, WinFsp detection, mode explanation, Quick Setup / Explore / Don't show again buttons. (`src/gui.cpp:1028-1071`)
+
+### Changed
+- `src/gui.cpp` — reconstructed all panel functions (Toolbar, DiskList, Planner, VolumeInfo, PerformancePanel, EventLog, StatusBar, ConfirmDestroy, ConfirmPurge, Benchmark, ExportDialog, BeginnerPanel, RestoreWizard, RebuildWizard, RenderMainUI, gui_run)
+- `src/common.h` — `APP_CONFIG` extended with `theme`, `language[8]`, `auto_restore`, `auto_mount`, `first_run`. Added `APP_THEME` enum.
+- `src/config.c` — `config_defaults()` updated to version 2 with new field defaults. `config_save()` and `config_load()` persist all new fields.
+- `src/main.c` — version string updated to `v1.0 RC4`. `--help` output expanded.
+
+### Fixed
+- `strncpy` argument order bugs (6 occurrences)
+- Undeclared `pos` variable
+- Unused `ctx`/`card_bg` variables
+
+### QA
+- 38 unit tests: 38 passed, 0 failed
+- Stress tests: all pass (longrun, random_io, concurrent, metadata_corrupt, powerfail, cli_bench)
+- Build: C objects OK, C++ objects OK, link OK (static, WinFsp + D3D11)
+
+---
+
+## v1.0 RC3 (2026-07-05) — Release Candidate 3
 
 ### Added
-- **Graphical User Interface** — Dear ImGui v1.92.8 + DirectX 11 + Win32
-  - Dark theme with custom color scheme
-  - Toolbar with all RAID operations
-  - Physical Disk List (10-column table)
-  - Storage Planner panel (RAID0/1/10 capacity estimation)
-  - Volume Info panel (state, level, capacity, mount, cache, UUID, generation, uptime, health)
-  - Event Log (500-line bounded, color-coded by severity)
-  - Status Bar with progress indicator and version
-  - Menubar (File/Actions/Help)
-  - About window with version, build date, architecture
-  - Confirmation dialogs for Destroy
-  - State-based button enable/disable
-  - Benchmark panel (read/write MB/s, latency)
-  - Export Diagnostic (metadata + event log + system info)
-- **GUI build** — C source compiled with `gcc`, C++/ImGui compiled with `g++`, linked with DirectX 11
-- **36 automated tests** — cache, journal, mirror, stripe, superblock
+- Volume rebuild wizard
+- Config-based volume restore (`W_LOAD_CONFIG`)
+- Quick Setup workflow (auto scan + create + mount)
+- Cache enable/disable/flush worker actions
+- Health check worker action
+- Beginner Mode with Quick Actions panel
+- Restore wizard (superblock vs config)
+- Developer mode with Performance Dashboard
+- Light theme support with `ApplyTheme()`
+- Console panel in Developer mode
+
+### Changed
+- `gui.cpp` expanded from ~770 to ~1400 lines
+- Worker thread extended to support 18 distinct action types
+- Event bus subscriptions expanded (8 event types)
+
+### Fixed
+- GUI state machine sync (state_value tracking)
+- Progress bar rendering in status bar
+- Drive letter parsing in Settings
+
+---
+
+## v1.0 RC2 (2026-07-04) — Release Candidate 2
+
+### Added
+- Full GUI implementation (Dear ImGui + DirectX 11)
+- Dark theme with custom color scheme
+- Toolbar with RAID operations (Scan, Create, Mount, etc.)
+- Physical Disk List (10-column table)
+- Storage Planner panel (RAID0/1/10 capacity)
+- Volume Info panel (state, level, UUID, generation, uptime)
+- Event Log (500-line bounded, color-coded)
+- Status Bar with state indicator
+- Benchmark dialog (read/write MB/s, latency)
+- Export Diagnostic dialog
+- Confirmation dialogs for Destroy/Purge
+- Menubar (File, Actions, View, Help)
+- State-based button enable/disable
+
+### Changed
+- `gui.c` rewritten as `gui.cpp` (C++ for ImGui)
+- `build.bat` updated for multi-language compilation (gcc + g++)
+- Version header changed from `v3.0` to `v1.0 RC2`
+
+### Fixed
+- All P3 warnings (format specifiers, strncpy truncation)
+- GUI auto-refresh timer (1-second polling of ui_model)
+
+---
+
+## v1.0 RC1 (2026-07-03) — Release Candidate 1
+
+### Added
+- Graphical User Interface — Dear ImGui + DirectX 11 + Win32
+- Dark theme with custom color scheme
+- Toolbar with all RAID operations
+- Physical Disk List (10-column table)
+- Storage Planner panel (RAID0/1/10 capacity estimation)
+- Volume Info panel (state, level, capacity, mount, cache, UUID, generation, uptime, health)
+- Event Log (500-line bounded, color-coded by severity)
+- Status Bar with progress indicator and version
+- Menubar (File/Actions/Help)
+- About window with version, build date, architecture
+- Confirmation dialogs for Destroy
+- State-based button enable/disable
+- Benchmark panel (read/write MB/s, latency)
+- Export Diagnostic (metadata + event log + system info)
+- GUI build pipeline (gcc + g++ + DirectX 11)
+- 36 automated tests (cache, journal, mirror, stripe, superblock)
 
 ### Changed
 - `gui.c` rewritten as `gui.cpp` (~770 lines of Dear ImGui code)
@@ -61,12 +145,12 @@ All notable changes to RAIDTEST are documented here.
 ## v2.0 (Sprint 4) — Validation & Stabilization
 
 ### Added
-- **36 test scenarios** covering all core paths
-- **Code review** — 0 memory leaks, 0 deadlocks, 0 handle leaks
-- **Static analysis** — ASan/UBSan: 0 errors; cppcheck: 0 critical findings
-- **10 validation documents** (BUG_LIST.md, KNOWN_LIMITATIONS.md, VALIDATION.md, etc.)
-- **VM demo infrastructure** (raidtest-vm GitHub repository)
-- **Demo video** — full lifecycle demonstration
+- 36 test scenarios covering all core paths
+- Code review — 0 memory leaks, 0 deadlocks, 0 handle leaks
+- Static analysis — ASan/UBSan: 0 errors; cppcheck: 0 critical findings
+- 10 validation documents (BUG_LIST.md, KNOWN_LIMITATIONS.md, VALIDATION.md, etc.)
+- VM demo infrastructure (raidtest-vm GitHub repository)
+- Demo video — full lifecycle demonstration
 
 ### Changed
 - All documentation rewritten for consistency
@@ -88,15 +172,13 @@ All notable changes to RAIDTEST are documented here.
 - **Serial-based volume restore** — `load` matches physical disk serials (not drive letters)
 - **Write-back Cache** — configurable size, async flush thread, LRU candidate design
 - **Journal (WAL)** — write-ahead log with CRC32 entry headers, replay on load
-- **State Machine** — 7 states (DISCONNECTED, SCAN_DONE, INITIALIZED, MOUNTED, UNMOUNTED, DEGRADED, FAILED) with per-command guards
-- **CLI commands** — `scan`, `init`, `create`, `mirror`, `mount`, `unmount`, `load`, `destroy`, `purge`, `check`, `metadata`, `info`, `bench`, `planner`, `events`, `simulate`, `help`
-- **UUID generation** on create/mirror (format: `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`)
+- **State Machine** — 7 states (DISCONNECTED → MOUNTED) with per-command guards
+- **CLI commands** — scan, init, create, mirror, mount, unmount, load, destroy, purge, check, metadata, info, bench, planner, events, simulate, help (18 commands)
+- **UUID generation** on create/mirror
 - **Health check** — `check` verifies disk accessibility before I/O
 - **Rollback** — atomic multi-step operations with cleanup on failure
 - **Event log** — timestamped, auto-trim, append-only
-- **Error code system** — `RC` enum with 20+ return codes
-- **Bug tracking** — BUG_LIST.md with 14 confirmed bugs
-- **Known limitations** — KNOWN_LIMITATIONS.md (45 documented items)
+- **Error code system** — `RC` enum with 13 return codes
 
 ### Changed
 - Complete rewrite from v0.1 prototype
@@ -123,13 +205,3 @@ All notable changes to RAIDTEST are documented here.
 - Single-threaded I/O
 - No UUID — volumes identified by order only
 - No rollback — partial failure leaves inconsistent state
-
----
-
-## Legend
-
-| Symbol | Meaning |
-|--------|---------|
-| ✅ | Complete |
-| 🚧 | In progress |
-| ⏳ | Planned |

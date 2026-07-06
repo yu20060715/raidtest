@@ -121,9 +121,36 @@ int main(int argc, char* argv[]) {
 
     if (argc > 1) {
         if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
-            printf("RAIDTEST v1.0 RC2 (build %s %s)\n", __DATE__, __TIME__);
-            printf("Asymmetric Stripe RAID 0 Engine\n");
+            printf("RAIDTEST v1.0 RC4 (build %s %s)\n", __DATE__, __TIME__);
+            printf("Asymmetric Stripe RAID Engine\n");
             printf("WinFsp FUSE + MinGW-w64\n");
+            log_cleanup();
+            return 0;
+        }
+        if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "/?") == 0) {
+            printf("RAIDTEST v1.0 RC4 - Asymmetric Stripe RAID Engine\n");
+            printf("Usage: raidtest_winfsp.exe [OPTIONS]\n");
+            printf("\n");
+            printf("Options:\n");
+            printf("  (no args)           Launch GUI\n");
+            printf("  --help, -h          Show this help\n");
+            printf("  --version, -v       Show version\n");
+            printf("  --cli               Force CLI mode (interactive)\n");
+            printf("  --auto [letter]     Auto-restore from saved config\n");
+            printf("  --quick             Quick all-in-one setup (scan + create + mount)\n");
+            printf("  --wizard            Guided setup wizard\n");
+            printf("  --daemon            Run as console daemon\n");
+            printf("  --service           Run as Windows service (SCM)\n");
+            printf("  --install-service   Register Windows service\n");
+            printf("  --uninstall-service Unregister Windows service\n");
+            printf("  --cleanup           Release resources and exit\n");
+            printf("\n");
+            printf("Commands (in CLI mode):\n");
+            printf("  scan, select, init, create, mirror, mount, unmount, destroy\n");
+            printf("  cache, expand, rebuild, check, info, status, map, planner\n");
+            printf("  bench, benchfs, test, random, simulate, metadata, events\n");
+            printf("  load, purge, config-save, config-load, wizard, quick, help\n");
+            printf("\n");
             log_cleanup();
             return 0;
         }
