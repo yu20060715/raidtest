@@ -264,8 +264,8 @@ typedef struct {
     RAM_CACHE  cache;
     bool       cache_enabled;
     char       mount_point[4];
-    uint64_t   bytes_written;
-    uint64_t   bytes_read;
+    volatile uint64_t bytes_written;
+    volatile uint64_t bytes_read;
     LARGE_INTEGER start_time;
     volatile LONG cache_flush_in_progress;
     uint32_t   raid_level;

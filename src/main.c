@@ -1,4 +1,5 @@
 #include "cmd_handler.h"
+#include "raid_service.h"
 #include "config.h"
 #include "daemon.h"
 #include "wizard.h"
@@ -10,31 +11,51 @@
 static void do_restore(char mount_letter) {
     if (g_state.cfg.config.disk_count == 0) { LOG_ERROR("No config to restore"); return; }
     LOG_INFO("Restoring from config (%u disks, mount at %c:)...", g_state.cfg.config.disk_count, mount_letter);
-    if (!g_state.disk.physical_disks) {
-        if (!disk_scan_all(&g_state.disk.physical_disks, &g_state.disk.physical_count)) {
-            LOG_ERROR("No disks detected"); return;
+
+    RC rc;
+    rc = raid_scan();
+    if (rc != RC_OK) { LOG_ERROR("No disks detected"); return; }
+
+    char id_size_buf[256];
+    int pos = 0;
+    for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++) {
+        DISK_CONFIG* dc = &g_state.cfg.config.disks[i];
+        if (dc->disk_id >= device_get_count()) {
+            LOG_ERROR("Disk %u from config not found", dc->disk_id);
+            return;
         }
+        char dl_str[2] = { dc->drive_letter, 0 };
+        raid_mapdrive(dc->disk_id, dl_str);
+        pos += snprintf(id_size_buf + pos, (size_t)(256 - pos), "%s%u:%llu",
+                        i > 0 ? " " : "",
+                        dc->disk_id, (unsigned long long)dc->pool_mb);
+        if (pos >= 256) { LOG_ERROR("Config too large"); return; }
     }
-    char cmd[512]; int pos = 0;
-    pos += snprintf(cmd + pos, 512 - (size_t)pos, "select");
-    for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++)
-        pos += snprintf(cmd + pos, 512 - (size_t)pos, " %u", g_state.cfg.config.disks[i].disk_id);
-    cmd_process(cmd);
 
-    pos = snprintf(cmd, 512, "init");
-    for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++)
-        pos += snprintf(cmd + pos, 512 - (size_t)pos, " %u:%llu", g_state.cfg.config.disks[i].disk_id,
-              (unsigned long long)g_state.cfg.config.disks[i].pool_mb);
-    cmd_process(cmd);
-    cmd_process("create");
+    char* args[MAX_DISKS];
+    int argc = 0;
+    char* ctx = NULL;
+    char* tok = strtok_s(id_size_buf, " ", &ctx);
+    while (tok && argc < MAX_DISKS) { args[argc++] = tok; tok = strtok_s(NULL, " ", &ctx); }
+    if (argc < MIN_DISKS) { LOG_ERROR("Need at least %d disks", MIN_DISKS); return; }
 
-    char cache_arg[16]; snprintf(cache_arg, 16, "%u", g_state.cfg.config.cache_mb);
-    char* cache_av[] = { cache_arg };
-    cmd_cache(1, cache_av);
+    rc = raid_init_pools(argc, args);
+    if (rc != RC_OK) { LOG_ERROR("Failed to initialize pool files"); return; }
 
-    char mount_arg[2] = { mount_letter, 0 };
-    char* mount_av[] = { mount_arg };
-    cmd_mount(1, mount_av);
+    rc = raid_create();
+    if (rc != RC_OK) { LOG_ERROR("Failed to create volume"); return; }
+
+    if (g_state.cfg.config.cache_mb > 0) {
+        char cache_str[16];
+        snprintf(cache_str, 16, "%u", g_state.cfg.config.cache_mb);
+        char* cache_av[] = { cache_str };
+        raid_cache(1, cache_av);
+    }
+
+    rc = raid_mount(mount_letter);
+    if (rc != RC_OK && rc != RC_ERR_ALREADY) {
+        LOG_WARN("Mount failed (rc=%d)", rc);
+    }
 }
 
 static int cli_main(int argc, char* argv[]) {
