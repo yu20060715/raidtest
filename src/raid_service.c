@@ -3,12 +3,11 @@
 #include "bench_io.h"
 #include "config.h"
 #include "wizard.h"
-#include "journal.h"
 #include "cleanup.h"
 #include "ram_cache.h"
 #include "event_bus.h"
-#include "pool_io.h"
 #include "stripe_engine.h"
+#include "volume_manager.h"
 #include "profiler.h"
 
 static APP_STATE* S(void) { return &g_state; }
@@ -16,9 +15,9 @@ static APP_STATE* S(void) { return &g_state; }
 /* ---- Event log subscriber ---- */
 static void event_log_callback(EVENT_TYPE type, const char* data, void* userdata) {
     (void)userdata;
-    if (!S()->appdata_path[0]) return;
+    if (!S()->rt.appdata_path[0]) return;
     wchar_t path[MAX_DRIVE_PATH];
-    StringCchPrintfW(path, MAX_DRIVE_PATH, L"%ls\\%ls", S()->appdata_path, L"events.log");
+    StringCchPrintfW(path, MAX_DRIVE_PATH, L"%ls\\%ls", S()->rt.appdata_path, L"events.log");
     HANDLE h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return;
     SetFilePointer(h, 0, NULL, FILE_END);
@@ -48,8 +47,8 @@ static void event_log_callback(EVENT_TYPE type, const char* data, void* userdata
 }
 
 static RC require(RAID_STATE s) {
-    if (S()->state != s) {
-        LOG_ERROR("Not allowed in '%s' (need '%s')", raid_state_str(S()->state), raid_state_str(s));
+    if (S()->rt.state != s) {
+        LOG_ERROR("Not allowed in '%s' (need '%s')", raid_state_str(S()->rt.state), raid_state_str(s));
         return RC_ERR_INVALID_STATE;
     }
     return RC_OK;
@@ -59,11 +58,11 @@ static RC require(RAID_STATE s) {
 RC raid_init(void) {
     InitializeCriticalSection(&g_state_cs);
     atexit(cleanup_cs);
-    config_load(&S()->config);
-    S()->cache_mb = S()->config.cache_mb;
-    S()->state = STATE_DISCONNECTED;
+    config_load(&S()->cfg.config);
+    S()->cache.cache_mb = S()->cfg.config.cache_mb;
+    S()->rt.state = STATE_DISCONNECTED;
     cleanup_bench_dirs();
-    GetEnvironmentVariableW(L"APPDATA", S()->appdata_path, MAX_DRIVE_PATH);
+    GetEnvironmentVariableW(L"APPDATA", S()->rt.appdata_path, MAX_DRIVE_PATH);
     event_bus_init();
     profiler_init();
     event_bus_subscribe(EVENT_DISK_FOUND, event_log_callback, NULL);
@@ -85,21 +84,21 @@ RC raid_init(void) {
 void raid_cleanup(void) {
     cleanup_all();
     device_cleanup();
-    S()->state = STATE_DISCONNECTED;
-    S()->volume_valid = false;
-    S()->cache_on = false;
-    S()->mounted = false;
+    S()->rt.state = STATE_DISCONNECTED;
+    S()->vol.volume_valid = false;
+    S()->cache.cache_on = false;
+    S()->rt.mounted = false;
 }
 
 /* ---- Scan ---- */
 RC raid_scan(void) {
-    S()->state = STATE_DISCONNECTED;
+    S()->rt.state = STATE_DISCONNECTED;
     device_cleanup();
     if (!device_refresh()) {
         LOG_WARN("No physical disks detected");
         return RC_ERR_NOT_FOUND;
     }
-    S()->state = STATE_DISCOVERED;
+    S()->rt.state = STATE_DISCOVERED;
     uint32_t n = device_get_count();
     LOG_INFO("Found %u physical disk(s). Running quick benchmark (%u MB)...", n, BENCH_SIZE_MB);
     for (uint32_t i = 0; i < n; i++) {
@@ -157,12 +156,12 @@ RC raid_bench(int argc, char* argv[]) {
 
 /* ---- Init Pools ---- */
 RC raid_init_pools(int argc, char* argv[]) {
-    if (S()->state != STATE_DISCOVERED && S()->state != STATE_UNMOUNTED) {
-        LOG_ERROR("Not allowed in '%s' (need DISCOVERED or UNMOUNTED)", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_DISCOVERED && S()->rt.state != STATE_UNMOUNTED) {
+        LOG_ERROR("Not allowed in '%s' (need DISCOVERED or UNMOUNTED)", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
     if (device_get_count() == 0) { LOG_ERROR("No physical disks. Run 'scan' first"); return RC_ERR_INVALID_STATE; }
-    if (S()->state == STATE_UNMOUNTED)
+    if (S()->rt.state == STATE_UNMOUNTED)
         cleanup_pool_session(S());
 
     uint32_t pairs[MAX_DISKS], pair_count = 0;
@@ -233,7 +232,7 @@ RC raid_init_pools(int argc, char* argv[]) {
                     char dl = (char)d->drive_letter[0];
                     if (dl >= 'A' && dl <= 'Z') { char ds[2] = { dl, 0 }; device_map_drive(di, ds); }
                 }
-                uint64_t mb = (i < S()->disk_count && S()->pool_sizes_mb[i] > 0) ? S()->pool_sizes_mb[i] : default_size;
+                uint64_t mb = (i < S()->disk.disk_count && S()->disk.pool_sizes_mb[i] > 0) ? S()->disk.pool_sizes_mb[i] : default_size;
                 if (mb < 1024) mb = 1024;
                 pairs[pair_count] = di;
                 pair_sizes[pair_count] = mb;
@@ -256,34 +255,33 @@ RC raid_init_pools(int argc, char* argv[]) {
                 if (dl >= 'A' && dl <= 'Z') { char ds[2] = { dl, 0 }; device_map_drive(di, ds); }
             }
             pairs[pair_count] = di;
-            pair_sizes[pair_count] = (i < S()->disk_count && S()->pool_sizes_mb[i] > 0) ? S()->pool_sizes_mb[i] : default_size;
+            pair_sizes[pair_count] = (i < S()->disk.disk_count && S()->disk.pool_sizes_mb[i] > 0) ? S()->disk.pool_sizes_mb[i] : default_size;
             pair_count++;
         }
     }
 
     if (pair_count < MIN_DISKS || pair_count > MAX_DISKS) { LOG_ERROR("Need %d-%d disks", MIN_DISKS, MAX_DISKS); return RC_ERR_INVALID_ARG; }
-    S()->disk_count = 0;
+    S()->disk.disk_count = 0;
     for (uint32_t i = 0; i < pair_count; i++) {
         uint32_t di = pairs[i];
         DISK_INFO* disk = device_get(di);
         if (!disk->drive_letter[0]) { char model_a[MAX_MODEL_LEN] = {0}; wcstombs(model_a, disk->model, MAX_MODEL_LEN - 1); LOG_WARN("Skip %s (no drive letter)", model_a); continue; }
-        uint64_t size_bytes = pair_sizes[i] * 1024ULL * 1024ULL;
         LOG_INFO("Creating pool file on %ls: %llu MB ...", disk->drive_letter, (unsigned long long)pair_sizes[i]);
-        if (!pool_file_create(disk, size_bytes)) {
-            LOG_ERROR("Failed to create pool on disk %u, rolling back %u pool(s)", di, S()->disk_count);
-            for (uint32_t j = 0; j < S()->disk_count; j++) {
-                pool_file_close(S()->disks[j]);
-                pool_file_delete(S()->disks[j]);
+        if (!volume_create_pool_file(disk, pair_sizes[i])) {
+            LOG_ERROR("Failed to create pool on disk %u, rolling back %u pool(s)", di, S()->disk.disk_count);
+            for (uint32_t j = 0; j < S()->disk.disk_count; j++) {
+                volume_close_pool_file(S()->disk.disks[j]);
+                volume_delete_pool_file(S()->disk.disks[j]);
             }
-            S()->disk_count = 0;
+            S()->disk.disk_count = 0;
             return RC_ERR_ROLLBACK;
         }
-        S()->pool_sizes_mb[S()->disk_count] = pair_sizes[i];
-        S()->disks[S()->disk_count++] = disk;
+        S()->disk.pool_sizes_mb[S()->disk.disk_count] = pair_sizes[i];
+        S()->disk.disks[S()->disk.disk_count++] = disk;
     }
-    if (S()->disk_count >= MIN_DISKS) {
-        S()->state = STATE_INITIALIZED;
-        LOG_OK("Pool files ready for %u disks", S()->disk_count);
+    if (S()->disk.disk_count >= MIN_DISKS) {
+        S()->rt.state = STATE_INITIALIZED;
+        LOG_OK("Pool files ready for %u disks", S()->disk.disk_count);
         return RC_OK;
     }
     LOG_ERROR("Failed to create pool files");
@@ -293,32 +291,32 @@ RC raid_init_pools(int argc, char* argv[]) {
 /* ---- Create / Mirror ---- */
 RC raid_create(void) {
     RC rc; if ((rc = require(STATE_INITIALIZED)) != RC_OK) return rc;
-    if (S()->disk_count < MIN_DISKS) { LOG_ERROR("Not enough disks (need %d)", MIN_DISKS); return RC_ERR_INVALID_STATE; }
-    if (!volume_create(&S()->volume, S()->disks, S()->disk_count)) return RC_ERR_IO;
-    S()->volume_valid = true;
-    S()->state = STATE_MOUNTED;
+    if (S()->disk.disk_count < MIN_DISKS) { LOG_ERROR("Not enough disks (need %d)", MIN_DISKS); return RC_ERR_INVALID_STATE; }
+    if (!volume_create(&S()->vol.volume, S()->disk.disks, S()->disk.disk_count)) return RC_ERR_IO;
+    S()->vol.volume_valid = true;
+    S()->rt.state = STATE_MOUNTED;
     return RC_OK;
 }
 
 RC raid_mirror(void) {
     RC rc; if ((rc = require(STATE_INITIALIZED)) != RC_OK) return rc;
-    if (S()->disk_count < MIN_MIRROR_DISKS) { LOG_ERROR("Not enough disks (need %d)", MIN_MIRROR_DISKS); return RC_ERR_INVALID_STATE; }
-    if (!volume_mirror(&S()->volume, S()->disks, S()->disk_count)) return RC_ERR_IO;
-    S()->volume_valid = true;
-    S()->state = STATE_MOUNTED;
+    if (S()->disk.disk_count < MIN_MIRROR_DISKS) { LOG_ERROR("Not enough disks (need %d)", MIN_MIRROR_DISKS); return RC_ERR_INVALID_STATE; }
+    if (!volume_mirror(&S()->vol.volume, S()->disk.disks, S()->disk.disk_count)) return RC_ERR_IO;
+    S()->vol.volume_valid = true;
+    S()->rt.state = STATE_MOUNTED;
     return RC_OK;
 }
 
 RC raid_expand(int argc, char* argv[]) {
     RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) return rc;
-    if (!volume_expand(&S()->volume, S()->physical_disks, S()->physical_count, argc, argv))
+    if (!volume_expand(&S()->vol.volume, S()->disk.physical_disks, S()->disk.physical_count, argc, argv))
         return RC_ERR_IO;
     return RC_OK;
 }
 
 RC raid_rebuild(int argc, char* argv[]) {
-    if (S()->state != STATE_MOUNTED && S()->state != STATE_DEGRADED) {
-        LOG_ERROR("Not allowed in '%s' (need MOUNTED or DEGRADED)", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_MOUNTED && S()->rt.state != STATE_DEGRADED) {
+        LOG_ERROR("Not allowed in '%s' (need MOUNTED or DEGRADED)", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
     if (argc < 2) { LOG_ERROR("Usage: rebuild <disk_idx> <new_disk_id> <pool_mb>"); return RC_ERR_INVALID_ARG; }
@@ -328,7 +326,7 @@ RC raid_rebuild(int argc, char* argv[]) {
     uint64_t pool_mb = 1024;
     if (argc >= 3 && !safe_atou64(argv[2], &pool_mb)) { LOG_ERROR("Invalid pool size '%s'", argv[2]); return RC_ERR_INVALID_ARG; }
     if (pool_mb < 1024) pool_mb = 1024;
-    if (!volume_rebuild(&S()->volume, S()->physical_disks, S()->physical_count,
+    if (!volume_rebuild(&S()->vol.volume, S()->disk.physical_disks, S()->disk.physical_count,
                         replace_idx, new_disk_id, pool_mb))
         return RC_ERR_IO;
     return RC_OK;
@@ -337,25 +335,25 @@ RC raid_rebuild(int argc, char* argv[]) {
 /* ---- Mount ---- */
 RC raid_mount(char drive_letter) {
     RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) return rc;
-    if (!S()->volume_valid) { LOG_ERROR("Volume not created"); return RC_ERR_INVALID_STATE; }
-    if (S()->mounted) { LOG_WARN("Already mounted at %c:", S()->volume.mount_point[0]); return RC_ERR_ALREADY; }
-    if (!volume_mount(&S()->volume, drive_letter)) { LOG_ERROR("Mount failed at %c:", drive_letter); return RC_ERR_MOUNT; }
-    S()->mounted = true;
+    if (!S()->vol.volume_valid) { LOG_ERROR("Volume not created"); return RC_ERR_INVALID_STATE; }
+    if (S()->rt.mounted) { LOG_WARN("Already mounted at %c:", S()->vol.volume.mount_point[0]); return RC_ERR_ALREADY; }
+    if (!volume_mount(&S()->vol.volume, drive_letter)) { LOG_ERROR("Mount failed at %c:", drive_letter); return RC_ERR_MOUNT; }
+    S()->rt.mounted = true;
     return RC_OK;
 }
 
 RC raid_unmount(void) {
     RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) return rc;
-    volume_unmount(&S()->volume, &S()->cache_on, &S()->flush_thread, &S()->mounted);
-    S()->state = STATE_UNMOUNTED;
-    S()->volume_valid = false;
+    volume_unmount(&S()->vol.volume, &S()->cache.cache_on, &S()->cache.flush_thread, &S()->rt.mounted);
+    S()->rt.state = STATE_UNMOUNTED;
+    S()->vol.volume_valid = false;
     LOG_OK("Unmounted (pool files preserved for 'load')");
     return RC_OK;
 }
 
 RC raid_load(const wchar_t* drive_root) {
-    if (S()->state != STATE_UNMOUNTED && S()->state != STATE_DISCOVERED) {
-        LOG_ERROR("Not allowed in '%s' (need UNMOUNTED or DISCOVERED)", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_UNMOUNTED && S()->rt.state != STATE_DISCOVERED) {
+        LOG_ERROR("Not allowed in '%s' (need UNMOUNTED or DISCOVERED)", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
     wchar_t root[4];
@@ -366,42 +364,42 @@ RC raid_load(const wchar_t* drive_root) {
     }
     LOG_INFO("Loading volume from %ls%ls...", root, CONFIG_DIR);
     uint32_t loaded = 0;
-    if (!volume_load(&S()->volume, S()->loaded_disks, &loaded,
-                     S()->physical_disks, S()->physical_count, root)) {
+    if (!volume_load(&S()->vol.volume, S()->disk.loaded_disks, &loaded,
+                     S()->disk.physical_disks, S()->disk.physical_count, root)) {
         LOG_ERROR("Failed to load volume");
         return RC_ERR_METADATA;
     }
-    S()->disk_count = loaded;
+    S()->disk.disk_count = loaded;
     for (uint32_t i = 0; i < loaded; i++)
-        S()->disks[i] = &S()->loaded_disks[i];
-    S()->volume_valid = true;
-    S()->state = STATE_MOUNTED;
+        S()->disk.disks[i] = &S()->disk.loaded_disks[i];
+    S()->vol.volume_valid = true;
+    S()->rt.state = STATE_MOUNTED;
     return RC_OK;
 }
 
 RC raid_destroy(void) {
-    if (S()->state != STATE_MOUNTED && S()->state != STATE_UNMOUNTED) {
-        LOG_ERROR("Not allowed in '%s' (need MOUNTED or UNMOUNTED)", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_MOUNTED && S()->rt.state != STATE_UNMOUNTED) {
+        LOG_ERROR("Not allowed in '%s' (need MOUNTED or UNMOUNTED)", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
     event_bus_publish(EVENT_VOLUME_DESTROYED, "destroy");
-    volume_destroy(&S()->volume, S()->disks, S()->disk_count,
-                   &S()->cache_on, &S()->flush_thread, &S()->mounted, &S()->state);
-    S()->volume_valid = false;
+    volume_destroy(&S()->vol.volume, S()->disk.disks, S()->disk.disk_count,
+                   &S()->cache.cache_on, &S()->cache.flush_thread, &S()->rt.mounted, &S()->rt.state);
+    S()->vol.volume_valid = false;
     LOG_OK("Volume destroyed (all pool files, superblocks, journals deleted)");
     return RC_OK;
 }
 
 RC raid_purge(void) {
-    if (S()->state != STATE_INITIALIZED && S()->state != STATE_UNMOUNTED) {
-        LOG_ERROR("Not allowed in '%s' (need INITIALIZED or UNMOUNTED). Use 'unmount' first.", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_INITIALIZED && S()->rt.state != STATE_UNMOUNTED) {
+        LOG_ERROR("Not allowed in '%s' (need INITIALIZED or UNMOUNTED). Use 'unmount' first.", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
     cleanup_pool_session(S());
-    S()->state = STATE_DISCOVERED;
-    S()->volume_valid = false;
-    S()->cache_on = false;
-    S()->mounted = false;
+    S()->rt.state = STATE_DISCOVERED;
+    S()->vol.volume_valid = false;
+    S()->cache.cache_on = false;
+    S()->rt.mounted = false;
     LOG_OK("Pool files and superblock deleted");
     return RC_OK;
 }
@@ -410,40 +408,35 @@ RC raid_purge(void) {
 RC raid_cache(int argc, char* argv[]) {
     RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) return rc;
     if (argc > 0 && strcmp(argv[0], "wt") == 0) {
-        if (!S()->cache_on) { LOG_ERROR("Enable cache first ('cache <sizeMB>')"); return RC_ERR_INVALID_STATE; }
-        S()->volume.cache.write_through = !S()->volume.cache.write_through;
-        LOG_OK("Write-through cache %s", S()->volume.cache.write_through ? "ON" : "OFF");
+        if (!S()->cache.cache_on) { LOG_ERROR("Enable cache first ('cache <sizeMB>')"); return RC_ERR_INVALID_STATE; }
+        S()->vol.volume.cache.write_through = !S()->vol.volume.cache.write_through;
+        LOG_OK("Write-through cache %s", S()->vol.volume.cache.write_through ? "ON" : "OFF");
         return RC_OK;
     }
     if (argc > 0 && strcmp(argv[0], "off") == 0) {
-        if (!S()->cache_on) { LOG_WARN("Cache already off"); return RC_ERR_ALREADY; }
-        if (S()->flush_thread) {
-            S()->volume.cache.running = 0;
-            S()->flush_thread = NULL;
-        }
-        cache_flush_all(&S()->volume.cache, &S()->volume);
-        cache_destroy(&S()->volume.cache);
-        S()->volume.cache_enabled = false;
-        S()->cache_on = false;
+        if (!S()->cache.cache_on) { LOG_WARN("Cache already off"); return RC_ERR_ALREADY; }
+        S()->cache.flush_thread = NULL;
+        cleanup_volume_cache(&S()->vol.volume);
+        S()->cache.cache_on = false;
         event_bus_publish(EVENT_CACHE_CHANGED, "off");
         LOG_OK("Write-back cache disabled and flushed");
         return RC_OK;
     }
-    if (S()->cache_on) { LOG_WARN("Cache already on. Use 'cache off' first to reinit"); return RC_ERR_ALREADY; }
+    if (S()->cache.cache_on) { LOG_WARN("Cache already on. Use 'cache off' first to reinit"); return RC_ERR_ALREADY; }
     uint32_t size_mb = CACHE_DEFAULT_MB;
     if (argc > 0) {
         if (!safe_atou32(argv[0], &size_mb)) { LOG_ERROR("Invalid cache size '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
     }
     if (size_mb < 256) size_mb = 256;
     LOG_INFO("Initializing %u MB RAM write-back cache...", size_mb);
-    if (!cache_init(&S()->volume.cache, (uint64_t)size_mb * 1024ULL * 1024ULL)) {
+    if (!cache_init(&S()->vol.volume.cache, (uint64_t)size_mb * 1024ULL * 1024ULL)) {
         LOG_ERROR("Cache init failed"); return RC_ERR_CACHE;
     }
-    S()->volume.cache_enabled = true;
-    S()->cache_on = true;
-    S()->cache_mb = size_mb;
-    S()->volume.cache.flush_thread = S()->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &S()->volume, 0, NULL);
-    if (S()->flush_thread) LOG_OK("Background flush thread started (1s interval)");
+    S()->vol.volume.cache_enabled = true;
+    S()->cache.cache_on = true;
+    S()->cache.cache_mb = size_mb;
+    S()->vol.volume.cache.flush_thread = S()->cache.flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &S()->vol.volume, 0, NULL);
+    if (S()->cache.flush_thread) LOG_OK("Background flush thread started (1s interval)");
     event_bus_publish(EVENT_CACHE_CHANGED, "on");
     LOG_OK("Write-back cache enabled: %u MB (block size=%u KB)", size_mb, CACHE_BLOCK_SIZE / 1024);
     return RC_OK;
@@ -451,7 +444,7 @@ RC raid_cache(int argc, char* argv[]) {
 
 /* ---- Info / Status / Test ---- */
 RC raid_info(void) {
-    LOG_INFO("=== RAIDTEST Status ===  State: %s", raid_state_str(S()->state));
+    LOG_INFO("=== RAIDTEST Status ===  State: %s", raid_state_str(S()->rt.state));
     uint32_t n = device_get_count();
     if (n > 0) {
         LOG_INFO("--- Physical disks (%u) ---", n);
@@ -468,8 +461,8 @@ RC raid_info(void) {
     } else {
         LOG_INFO("No physical disks scanned. Type 'scan' to discover.");
     }
-    if (!S()->volume_valid) { LOG_INFO("No virtual volume."); return RC_OK; }
-    STRIPE_VOLUME* vol = &S()->volume;
+    if (!S()->vol.volume_valid) { LOG_INFO("No virtual volume."); return RC_OK; }
+    STRIPE_VOLUME* vol = &S()->vol.volume;
     LOG_INFO("--- Virtual Volume ---");
     LOG_INFO("RAID level: %s", vol->raid_level == RAID_LEVEL_MIRROR ? "Mirror (RAID1)" : "Stripe (RAID0)");
     LOG_INFO("Volume disks: %u (healthy: %u)", vol->disk_count, (uint32_t)vol->healthy_count);
@@ -496,7 +489,7 @@ RC raid_info(void) {
         LeaveCriticalSection(&vol->cache.lock);
     }
     double dirty_ratio = vol->cache.block_count > 0 ? (double)dirty / vol->cache.block_count * 100.0 : 0;
-    LOG_INFO("Cache: %s (%u MB, dirty=%.1f%%)", vol->cache_enabled ? "ON" : "OFF", S()->cache_mb, dirty_ratio);
+    LOG_INFO("Cache: %s (%u MB, dirty=%.1f%%)", vol->cache_enabled ? "ON" : "OFF", S()->cache.cache_mb, dirty_ratio);
     if (vol->cache_enabled) {
         double hit_rate = (vol->cache.hit_count + vol->cache.miss_count) > 0 ? (double)vol->cache.hit_count / (vol->cache.hit_count + vol->cache.miss_count) * 100.0 : 0;
         LOG_INFO("  Cache hit rate: %.1f%%  (hits=%llu, misses=%llu)", hit_rate, (unsigned long long)vol->cache.hit_count, (unsigned long long)vol->cache.miss_count);
@@ -520,24 +513,24 @@ RC raid_info(void) {
 }
 
 RC raid_status(void) {
-    if (S()->state != STATE_MOUNTED && S()->state != STATE_DEGRADED) {
-        LOG_ERROR("Not allowed in '%s' (need MOUNTED or DEGRADED)", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_MOUNTED && S()->rt.state != STATE_DEGRADED) {
+        LOG_ERROR("Not allowed in '%s' (need MOUNTED or DEGRADED)", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
-    STRIPE_VOLUME* vol = &S()->volume;
+    STRIPE_VOLUME* vol = &S()->vol.volume;
     LARGE_INTEGER now, freq;
     QueryPerformanceCounter(&now); QueryPerformanceFrequency(&freq);
     double elapsed = (double)(now.QuadPart - vol->start_time.QuadPart) / freq.QuadPart;
     system("cls");
     printf("\n");
     printf("  ========== RAIDTEST LIVE STATUS ==========\n");
-    printf("  State:    %s\n", raid_state_str(S()->state));
+    printf("  State:    %s\n", raid_state_str(S()->rt.state));
     printf("  RAID:     %s\n", vol->raid_level == RAID_LEVEL_MIRROR ? "Mirror (RAID1)" : "Stripe (RAID0)");
     printf("  Virtual size: %.1f GB\n", (double)vol->virtual_total_bytes / (1024.0*1024.0*1024.0));
     printf("  Runtime: %.0f s\n", elapsed);
     printf("  Written: %llu MB  (%.0f MB/s)\n", (unsigned long long)(vol->bytes_written / (1024*1024)), elapsed > 0 ? (vol->bytes_written / (1024.0*1024.0)) / elapsed : 0);
     printf("  Read:    %llu MB  (%.0f MB/s)\n", (unsigned long long)(vol->bytes_read / (1024*1024)), elapsed > 0 ? (vol->bytes_read / (1024.0*1024.0)) / elapsed : 0);
-    printf("  Cache:   %s  %u MB\n", vol->cache_enabled ? "ON" : "OFF", S()->cache_mb);
+    printf("  Cache:   %s  %u MB\n", vol->cache_enabled ? "ON" : "OFF", S()->cache.cache_mb);
     printf("  Physical disks: %u\n", device_get_count());
     for (uint32_t i = 0; i < device_get_count(); i++) {
         DISK_INFO* d = device_get(i);
@@ -564,14 +557,14 @@ RC raid_status(void) {
 RC raid_map(void) {
     RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) return rc;
     uint64_t dump_size = 64ULL * 1024 * 1024;
-    if (dump_size > S()->volume.virtual_total_bytes) dump_size = S()->volume.virtual_total_bytes;
-    stripe_volume_dump_mapping(&S()->volume, 0, dump_size);
+    if (dump_size > S()->vol.volume.virtual_total_bytes) dump_size = S()->vol.volume.virtual_total_bytes;
+    stripe_volume_dump_mapping(&S()->vol.volume, 0, dump_size);
     return RC_OK;
 }
 
 RC raid_test(void) {
     RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) return rc;
-    stripe_volume_verify_io(&S()->volume);
+    stripe_volume_verify_io(&S()->vol.volume);
     return RC_OK;
 }
 
@@ -584,7 +577,7 @@ RC raid_random(int argc, char** args) {
     if (ops < 1) ops = 1;
     if (max_kb < 4) max_kb = 4;
     if (max_kb > 1024) max_kb = 1024;
-    stripe_volume_random_test(&S()->volume, ops, max_kb);
+    stripe_volume_random_test(&S()->vol.volume, ops, max_kb);
     return RC_OK;
 }
 
@@ -598,16 +591,16 @@ RC raid_benchfs(int argc, char* argv[]) {
     if (block_kb < 4) block_kb = 4;
     if (block_kb > 8192) block_kb = 8192;
     if (block_kb > size_mb * 1024) block_kb = size_mb * 1024;
-    bench_volume(&S()->volume, size_mb, block_kb);
+    bench_volume(&S()->vol.volume, size_mb, block_kb);
     return RC_OK;
 }
 
 RC raid_check(void) {
-    if (S()->state != STATE_MOUNTED && S()->state != STATE_DEGRADED) {
-        LOG_ERROR("Not allowed in '%s' (need MOUNTED or DEGRADED)", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_MOUNTED && S()->rt.state != STATE_DEGRADED) {
+        LOG_ERROR("Not allowed in '%s' (need MOUNTED or DEGRADED)", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
-    STRIPE_VOLUME* vol = &S()->volume;
+    STRIPE_VOLUME* vol = &S()->vol.volume;
     bool all_ok = true;
     for (uint32_t i = 0; i < vol->disk_count; i++) {
         DISK_INFO* d = vol->disks[i];
@@ -637,7 +630,7 @@ RC raid_check(void) {
         wchar_t root[4];
         wcscpy_s(root, 4, vol->disks[i]->drive_letter);
         SUPERBLOCK sb;
-        if (superblock_read_raw(root, &sb)) {
+        if (metadata_read(root, &sb)) {
             sb_found++;
             char uuid_str[64] = "0000000000000000-0000000000000000";
             if (sb.version >= 4) uuid_to_str(&sb.volume_uuid, uuid_str, sizeof(uuid_str));
@@ -656,35 +649,35 @@ RC raid_check(void) {
 }
 
 RC raid_simulate(int argc, char* argv[]) {
-    if (S()->state != STATE_MOUNTED) {
-        LOG_ERROR("Not allowed in '%s' (need MOUNTED)", raid_state_str(S()->state));
+    if (S()->rt.state != STATE_MOUNTED) {
+        LOG_ERROR("Not allowed in '%s' (need MOUNTED)", raid_state_str(S()->rt.state));
         return RC_ERR_INVALID_STATE;
     }
     if (argc < 2) { LOG_ERROR("Usage: simulate <disk_idx> <mode>  (mode: fail, healthy, disconnect)"); return RC_ERR_INVALID_ARG; }
     uint32_t idx = 0;
     if (!safe_atou32(argv[0], &idx)) { LOG_ERROR("Invalid disk index '%s'", argv[0]); return RC_ERR_INVALID_ARG; }
-    if (idx >= S()->volume.disk_count) { LOG_ERROR("Invalid disk index %u", idx); return RC_ERR_INVALID_ARG; }
-    DISK_INFO* d = S()->volume.disks[idx];
+    if (idx >= S()->vol.volume.disk_count) { LOG_ERROR("Invalid disk index %u", idx); return RC_ERR_INVALID_ARG; }
+    DISK_INFO* d = S()->vol.volume.disks[idx];
     char mode = argv[1][0];
     switch (mode) {
         case 'f':
             InterlockedExchange(&d->healthy, 0); d->faulty = true;
-            InterlockedDecrement(&S()->volume.healthy_count);
-            S()->state = STATE_DEGRADED;
+            InterlockedDecrement(&S()->vol.volume.healthy_count);
+            S()->rt.state = STATE_DEGRADED;
             LOG_WARN("Simulated: disk %u -> FAILED", idx);
             event_bus_publish(EVENT_ERROR, "simulate: disk failed");
             break;
         case 'h':
             InterlockedExchange(&d->healthy, 1); d->faulty = false;
-            InterlockedIncrement(&S()->volume.healthy_count);
-            if (S()->volume.healthy_count >= S()->volume.disk_count) S()->state = STATE_MOUNTED;
+            InterlockedIncrement(&S()->vol.volume.healthy_count);
+            if (S()->vol.volume.healthy_count >= S()->vol.volume.disk_count) S()->rt.state = STATE_MOUNTED;
             LOG_OK("Simulated: disk %u -> HEALTHY", idx);
             break;
         case 'd':
-            pool_file_close(d);
+            volume_close_pool_file(d);
             InterlockedExchange(&d->healthy, 0); d->faulty = true;
-            InterlockedDecrement(&S()->volume.healthy_count);
-            S()->state = STATE_DEGRADED;
+            InterlockedDecrement(&S()->vol.volume.healthy_count);
+            S()->rt.state = STATE_DEGRADED;
             LOG_WARN("Simulated: disk %u -> DISCONNECTED", idx);
             event_bus_publish(EVENT_ERROR, "simulate: disk disconnected");
             break;
@@ -732,9 +725,9 @@ RC raid_planner(void) {
 }
 
 RC raid_events(void) {
-    if (!S()->appdata_path[0]) { LOG_INFO("No appdata path. No event log."); return RC_OK; }
+    if (!S()->rt.appdata_path[0]) { LOG_INFO("No appdata path. No event log."); return RC_OK; }
     wchar_t path[MAX_DRIVE_PATH];
-    StringCchPrintfW(path, MAX_DRIVE_PATH, L"%ls\\%ls", S()->appdata_path, L"events.log");
+    StringCchPrintfW(path, MAX_DRIVE_PATH, L"%ls\\%ls", S()->rt.appdata_path, L"events.log");
     HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) { LOG_INFO("No events logged yet."); return RC_OK; }
     DWORD size = GetFileSize(h, NULL);
@@ -754,7 +747,7 @@ RC raid_events(void) {
 
 /* ---- Config ---- */
 RC raid_config_save(void) {
-    APP_CONFIG* cfg = &S()->config;
+    APP_CONFIG* cfg = &S()->cfg.config;
     cfg->disk_count = 0;
     for (uint32_t i = 0; i < device_get_count(); i++) {
         DISK_INFO* d = device_get(i);
@@ -765,15 +758,15 @@ RC raid_config_save(void) {
             cfg->disk_count++;
         }
     }
-    cfg->cache_mb = S()->cache_mb;
-    cfg->mount_letter = S()->volume.mount_point[0] ? S()->volume.mount_point[0] : 'G';
+    cfg->cache_mb = S()->cache.cache_mb;
+    cfg->mount_letter = S()->vol.volume.mount_point[0] ? S()->vol.volume.mount_point[0] : 'G';
     cfg->auto_bench = true;
     config_save(cfg);
     return RC_OK;
 }
 
 RC raid_config_load(void) {
-    config_load(&S()->config);
+    config_load(&S()->cfg.config);
     LOG_OK("Config loaded. Use 'scan' + 'select' + 'create' to restore");
     return RC_OK;
 }
@@ -799,14 +792,14 @@ RC raid_quick(void) {
     rc = raid_init_pools(argc, args); if (rc != RC_OK) return rc;
     rc = raid_create(); if (rc != RC_OK) return rc;
     uint64_t total_pool = 0;
-    for (uint32_t i = 0; i < S()->disk_count; i++) total_pool += S()->pool_sizes_mb[i];
+    for (uint32_t i = 0; i < S()->disk.disk_count; i++) total_pool += S()->disk.pool_sizes_mb[i];
     uint64_t total_gb = total_pool / 1024; if (total_gb == 0) total_gb = 1;
     uint32_t max_cache = (uint32_t)min_u64(total_gb * 1024, 4096);
     uint32_t cache_mb = max_cache < CACHE_DEFAULT_MB ? max_cache : CACHE_DEFAULT_MB;
     char cache_arg[16]; snprintf(cache_arg, 16, "%u", cache_mb);
     char* cache_argv[] = { cache_arg };
     rc = raid_cache(1, cache_argv); if (rc != RC_OK) LOG_WARN("Cache setup failed (rc=%d)", rc);
-    char mount_letter = S()->config.mount_letter ? S()->config.mount_letter : 'G';
+    char mount_letter = S()->cfg.config.mount_letter ? S()->cfg.config.mount_letter : 'G';
     rc = raid_mount(mount_letter); if (rc != RC_OK) LOG_WARN("Mount failed (rc=%d)", rc);
     raid_config_save();
     LOG_OK("Quick setup complete! Volume mounted at %c:. Type 'exit' to quit.", mount_letter);

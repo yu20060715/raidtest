@@ -3,7 +3,7 @@ cd /d "%~dp0"
 
 :: Build stress/validation tests only (skip main app and GUI)
 
-set SRC_CORE=src/stripe_engine.c src/mirror_engine.c src/ram_cache.c src/logger.c src/journal.c src/pool_io.c src/superblock.c src/test_common.c
+set SRC_CORE=src/stripe_engine.c src/mirror_engine.c src/storage_common.c src/ram_cache.c src/logger.c src/journal.c src/pool_io.c src/superblock.c src/test_common.c
 set CFLAGS=-Wall -O2 -Isrc
 
 echo Building stress tests...

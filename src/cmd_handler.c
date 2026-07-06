@@ -1,17 +1,12 @@
 #include "cmd_handler.h"
 #include "raid_service.h"
 #include "disk_scanner.h"
-#include "pool_io.h"
 #include "bench_io.h"
 #include "fuse_bridge.h"
 #include "config.h"
 #include "wizard.h"
 #include "daemon.h"
 #include "cleanup.h"
-#include "superblock.h"
-#include "journal.h"
-#include "mirror_engine.h"
-#include "ram_cache.h"
 
 APP_STATE g_state = {0};
 CRITICAL_SECTION g_state_cs;
@@ -26,8 +21,8 @@ void cmd_print_banner(void) {
     printf("\n");
     printf("  ==============================================\n");
     printf("    RAIDTEST v1.0 RC2 - Asymmetric Stripe Engine\n");
-    printf("    Non-对称快慢混搭 RAID 0 效能引擎\n");
-    printf("    支援: SATA SSD + NVMe SSD 自由混搭\n");
+    printf("    Non-撖寧妍敹急瘛瑟 RAID 0 ?撘?\n");
+    printf("    ?舀: SATA SSD + NVMe SSD ?芰瘛瑟\n");
     printf("  ==============================================\n");
     printf("\n");
 }
@@ -58,7 +53,7 @@ static RC cmd_rebuild(int argc, char* argv[]) { return raid_rebuild(argc, argv);
 RC cmd_cache(int argc, char* argv[]) { return raid_cache(argc, argv); }
 
 RC cmd_mount(int argc, char* argv[]) {
-    char drive = g_state.config.mount_letter ? g_state.config.mount_letter : 'G';
+    char drive = g_state.cfg.config.mount_letter ? g_state.cfg.config.mount_letter : 'G';
     if (argc > 0 && argv[0][0] >= 'A' && argv[0][0] <= 'Z') drive = argv[0][0];
     return raid_mount(drive);
 }
@@ -113,40 +108,40 @@ static RC cmd_quick(void) { return raid_quick(); }
 static void cmd_help(void) {
     cmd_print_banner();
     printf("  COMMANDS:\n");
-    printf("    scan                         列出所有實體 SSD\n");
-    printf("    mapdrive <id> <driver>       綁定磁碟到槽號 (例: mapdrive 0 F)\n");
-    printf("    select <id1> <id2> ...       等同 'init id1 id2 ...' (選擇+建立 pool)\n");
-    printf("    bench [sizeMB]               對選中磁碟做真實測速 (預設 512MB)\n");
-    printf("    init [id...|id:mb...]         建立 pool 檔案 (例: init 0 2, init 0:25600 3:51200)\n");
-    printf("    create                       建立非對稱條帶化虛擬磁碟 (RAID0)\n");
-    printf("    mirror                       建立鏡像虛擬磁碟 (RAID1)\n");
-    printf("    rebuild <idx> <disk> [MB]    更換故障鏡像磁碟並重建資料\n");
-    printf("    cache [sizeMB]               啟用 RAM Write-back 快取 (預設 %u MB)\n", CACHE_DEFAULT_MB);
-    printf("    cache wt                     切換 Write-through 模式 (再次輸入切回 Write-back)\n");
-    printf("    cache off                    停用快取並刷回磁碟\n");
-    printf("    mount [代號]                  掛載為 Windows 磁碟機 (需 WinFsp)\n");
-    printf("    unmount                      卸載磁碟機 (保留 pool 檔案，可用 load 載入)\n");
-    printf("    load                         從 superblock 重新載入 volume (保留上次資料)\n");
-    printf("    purge                        刪除 pool 檔案 + superblock (完整清除)\n");
-    printf("    test                         執行 IO 驗證 (寫入+讀取+比對)\n");
-    printf("    benchfs [sizeMB] [blockKB]   直接對引擎做讀寫測速 (免 CDM)\n");
-    printf("    cleanup                      清理所有 pool 檔案、資料夾與設定\n");
-    printf("    wizard                       互動精靈: 引導式設定與掛載\n");
-    printf("    config-save                  儲存目前設定到 JSON\n");
-    printf("    config-load                  載入上次儲存的設定\n");
-    printf("    quick                        快速設定: scan+選盤+init+create+cache+mount\n");
-    printf("    info                         顯示虛擬磁碟資訊 (含 cache dirty ratio)\n");
-    printf("    map                          顯示 LBA 映射表 (前 64MB)\n");
-    printf("    random <ops> [maxKB]         隨機 I/O 壓力測試 (寫入+讀取+比對)\n");
-    printf("    destroy                      清除 volume (unmount + 刪除 pool/superblock/journal)\n");
-    printf("    metadata [代號]               顯示 superblock 元數據\n");
-    printf("    check                        健康檢查: 驗證所有磁碟與 superblock\n");
-    printf("    simulate <idx> <f|h|d>       模擬磁碟故障/復原/斷線\n");
-    printf("    planner                      容量規劃: 顯示各 RAID 級別可用容量\n");
-    printf("    events                       顯示事件日誌\n");
-    printf("    status                       即時效能監控\n");
-    printf("    help                         顯示說明\n");
-    printf("    exit                         離開\n");
+    printf("    scan                         ???祕擃?SSD\n");
+    printf("    mapdrive <id> <driver>       蝬?蝤??唳局??(靘? mapdrive 0 F)\n");
+    printf("    select <id1> <id2> ...       蝑? 'init id1 id2 ...' (?豢?+撱箇? pool)\n");
+    printf("    bench [sizeMB]               撠銝剔?蝣??祕皜祇?(?身 512MB)\n");
+    printf("    init [id...|id:mb...]         撱箇? pool 瑼? (靘? init 0 2, init 0:25600 3:51200)\n");
+    printf("    create                       撱箇???蝔望?撣嗅??蝤? (RAID0)\n");
+    printf("    mirror                       撱箇??∪??蝤? (RAID1)\n");
+    printf("    rebuild <idx> <disk> [MB]    ?湔????∪?蝤?銝阡?撱箄??n");
+    printf("    cache [sizeMB]               ? RAM Write-back 敹怠? (?身 %u MB)\n", CACHE_DEFAULT_MB);
+    printf("    cache wt                     ?? Write-through 璅∪? (?活頛詨?? Write-back)\n");
+    printf("    cache off                    ?敹怠?銝血??蝣n");
+    printf("    mount [隞??]                  ????Windows 蝤?璈?(? WinFsp)\n");
+    printf("    unmount                      ?貉?蝤?璈?(靽? pool 瑼?嚗??load 頛)\n");
+    printf("    load                         敺?superblock ?頛 volume (靽?銝活鞈?)\n");
+    printf("    purge                        ?芷 pool 瑼? + superblock (摰皜)\n");
+    printf("    test                         ?瑁? IO 撽? (撖怠+霈??瘥?)\n");
+    printf("    benchfs [sizeMB] [blockKB]   ?湔撠???霈撖急葫??(??CDM)\n");
+    printf("    cleanup                      皜????pool 瑼????冗?身摰n");
+    printf("    wizard                       鈭?蝎暸?: 撘?撘身摰???\n");
+    printf("    config-save                  ?脣??桀?閮剖???JSON\n");
+    printf("    config-load                  頛銝活?脣??身摰n");
+    printf("    quick                        敹恍身摰? scan+?貊+init+create+cache+mount\n");
+    printf("    info                         憿舐內?蝤?鞈? (??cache dirty ratio)\n");
+    printf("    map                          憿舐內 LBA ??銵?(??64MB)\n");
+    printf("    random <ops> [maxKB]         ?冽? I/O 憯?皜祈岫 (撖怠+霈??瘥?)\n");
+    printf("    destroy                      皜 volume (unmount + ?芷 pool/superblock/journal)\n");
+    printf("    metadata [隞??]               憿舐內 superblock ??n");
+    printf("    check                        ?亙熒瑼Ｘ: 撽????蝣? superblock\n");
+    printf("    simulate <idx> <f|h|d>       璅⊥蝤???/敺拙?/?瑞?\n");
+    printf("    planner                      摰寥?閬?: 憿舐內??RAID 蝝?舐摰寥?\n");
+    printf("    events                       憿舐內鈭辣?亥?\n");
+    printf("    status                       ?單????\n");
+    printf("    help                         憿舐內隤芣?\n");
+    printf("    exit                         ?ａ?\n");
     printf("\n");
     printf("  QUICK START:\n");
     printf("    quick               ->  scan + bench + select + init + mount (all-in-one)\n");
@@ -177,13 +172,13 @@ static const char* rc_str(RC rc) {
 /* ---- Command dispatcher (unchanged) ---- */
 
 static void auto_restore_or_quick(void) {
-    config_load(&g_state.config);
-    if (g_state.config.disk_count > 0) {
+    config_load(&g_state.cfg.config);
+    if (g_state.cfg.config.disk_count > 0) {
         LOG_INFO("Restoring from saved config...");
         raid_scan();
-        for (uint32_t i = 0; i < g_state.config.disk_count; i++) {
-            APP_CONFIG* cfg = &g_state.config;
-            if (!g_state.physical_disks || !cfg || cfg->disk_count == 0) break;
+        for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++) {
+            APP_CONFIG* cfg = &g_state.cfg.config;
+            if (!g_state.disk.physical_disks || !cfg || cfg->disk_count == 0) break;
             char dl_str[2] = { cfg->disks[0].drive_letter, 0 };
             raid_mapdrive(cfg->disks[0].disk_id, dl_str);
             break;

@@ -14,13 +14,8 @@ void volume_gen_uuid(STRIPE_VOLUME* vol) {
 }
 
 bool volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
-    if (vol->cache_enabled) {
-        vol->cache.running = 0;
-        cache_flush_all(&vol->cache, vol);
-        cache_destroy(&vol->cache);
-    }
+    cleanup_volume_cache(vol);
     stripe_volume_destroy(vol);
-    vol->cache_enabled = false;
 
     uint32_t opened = 0;
     for (uint32_t i = 0; i < disk_count; i++) {
@@ -42,13 +37,8 @@ bool volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
 }
 
 bool volume_mirror(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
-    if (vol->cache_enabled) {
-        vol->cache.running = 0;
-        cache_flush_all(&vol->cache, vol);
-        cache_destroy(&vol->cache);
-    }
+    cleanup_volume_cache(vol);
     stripe_volume_destroy(vol);
-    vol->cache_enabled = false;
 
     uint32_t opened = 0;
     for (uint32_t i = 0; i < disk_count; i++) {
@@ -89,11 +79,8 @@ bool volume_mount(STRIPE_VOLUME* vol, char drive_letter) {
 
 bool volume_unmount(STRIPE_VOLUME* vol, bool* cache_on, HANDLE* flush_thread, bool* mounted) {
     if (flush_thread && *flush_thread) {
-        vol->cache.running = 0;
-        cache_flush_all(&vol->cache, vol);
-        cache_destroy(&vol->cache);
+        cleanup_volume_cache(vol);
         *flush_thread = NULL;
-        vol->cache_enabled = false;
     }
     if (*mounted) {
         fuse_unmount_volume(vol->mount_point[0]);
@@ -122,6 +109,30 @@ bool volume_destroy(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count,
     *state = STATE_DISCOVERED;
     event_bus_publish(EVENT_VOLUME_DESTROYED, "");
     return true;
+}
+
+bool volume_cache_enable(STRIPE_VOLUME* vol, uint64_t cache_size,
+                         bool* cache_on, uint32_t* cache_mb, HANDLE* flush_thread) {
+    if (!cache_init(&vol->cache, cache_size)) return false;
+    vol->cache_enabled = true;
+    *cache_on = true;
+    *cache_mb = (uint32_t)(cache_size / (1024 * 1024));
+    vol->cache.flush_thread = *flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, vol, 0, NULL);
+    return true;
+}
+
+void volume_close_pool_file(DISK_INFO* disk) {
+    pool_file_close(disk);
+}
+
+void volume_delete_pool_file(DISK_INFO* disk) {
+    pool_file_delete(disk);
+}
+
+bool volume_create_pool_file(DISK_INFO* disk, uint64_t size_mb) {
+    uint64_t size_bytes = size_mb * 1024ULL * 1024ULL;
+    if (validate_pool_size(size_bytes) != RC_OK) return false;
+    return pool_file_create(disk, size_bytes);
 }
 
 bool volume_expand(STRIPE_VOLUME* vol, DISK_INFO** physical_disks, uint32_t physical_count,

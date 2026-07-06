@@ -2,21 +2,6 @@
 #include "mirror_engine.h"
 #include "pool_io.h"
 
-/* ---- CRC32 (same as before) ---- */
-static uint32_t crc32(const uint8_t* data, size_t len) {
-    uint32_t table[256];
-    for (uint32_t i = 0; i < 256; i++) {
-        uint32_t crc = i;
-        for (uint32_t j = 0; j < 8; j++)
-            crc = (crc >> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
-        table[i] = crc;
-    }
-    uint32_t crc = 0xFFFFFFFF;
-    for (size_t i = 0; i < len; i++)
-        crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    return crc ^ 0xFFFFFFFF;
-}
-
 /* ---- v1 struct for backward-compat reads ---- */
 #pragma pack(push, 1)
 typedef struct {
@@ -164,8 +149,9 @@ static bool try_read_superblock_from_drive(const wchar_t* drive_root, SUPERBLOCK
     /* Read into a larger buffer to handle both v1 and v2 sizes */
     uint8_t raw[2048];
     DWORD read = 0;
-    if (!ReadFile(h, raw, sizeof(raw), &read, NULL)) { CloseHandle(h); return false; }
+    BOOL read_ok = ReadFile(h, raw, sizeof(raw), &read, NULL);
     CloseHandle(h);
+    if (!read_ok) return false;
 
     /* Check magic at offset 0 */
     uint32_t magic;

@@ -22,14 +22,6 @@ void log_cleanup(void) {
 }
 
 void log_set_level(LOG_LEVEL min_level) { g_min_level = min_level; }
-void log_set_timestamp(bool enable) { g_timestamp = enable; }
-
-void log_set_file(const char* path) {
-    EnterCriticalSection(&g_log_lock);
-    if (g_log_file) fclose(g_log_file);
-    g_log_file = fopen(path, "a");
-    LeaveCriticalSection(&g_log_lock);
-}
 
 static const char* level_label(LOG_LEVEL level) {
     switch (level) {

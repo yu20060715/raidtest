@@ -28,3 +28,10 @@ bool volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO** physical_disks, uint32_t phy
                     uint32_t replace_idx, uint32_t new_disk_id, uint64_t pool_mb);
 
 void volume_gen_uuid(STRIPE_VOLUME* vol);
+
+bool volume_cache_enable(STRIPE_VOLUME* vol, uint64_t cache_size,
+                         bool* cache_on, uint32_t* cache_mb, HANDLE* flush_thread);
+
+bool volume_create_pool_file(DISK_INFO* disk, uint64_t size_mb);
+void volume_close_pool_file(DISK_INFO* disk);
+void volume_delete_pool_file(DISK_INFO* disk);

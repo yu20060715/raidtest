@@ -1,6 +1,5 @@
 #pragma once
 #include "common.h"
-#include "stripe_engine.h"
 
 #define JOURNAL_MAGIC     0x4A4F5552
 #define JOURNAL_VERSION   2

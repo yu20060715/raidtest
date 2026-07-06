@@ -1,4 +1,5 @@
 #include "fuse_bridge.h"
+#include "stripe_engine.h"
 #include "ram_cache.h"
 
 #ifdef USE_WINFSP

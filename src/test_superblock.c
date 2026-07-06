@@ -462,6 +462,46 @@ TEST(sb_serial_fallback)       { return test_sb_serial_fallback(); }
 TEST(sb_metadata_format)       { return test_sb_metadata_format(); }
 TEST(sb_restore_no_phys)       { return test_sb_restore_no_phys(); }
 TEST(sb_format_v3_compat)      { return test_sb_format_v3_compat(); }
+/* Regression: double-close fix — corrupted checksum read + retry */
+TEST(sb_double_close_regression) {
+    sb_cleanup();
+    DISK_INFO* d0 = sb_disk_create(32ULL * 1024 * 1024, L"Reg A");
+    DISK_INFO* d1 = sb_disk_create(32ULL * 1024 * 1024, L"Reg B");
+    ASSERT(d0 && d1, "disk create failed");
+    DISK_INFO* disks[] = {d0, d1};
+    STRIPE_VOLUME vol;
+    ASSERT(stripe_volume_create(&vol, disks, 2, 1024 * 1024), "create failed");
+    ASSERT(superblock_write(&vol), "write failed");
+
+    /* Corrupt checksum field only */
+    wchar_t path[MAX_DRIVE_PATH];
+    wcscpy_s(path, MAX_DRIVE_PATH, L"C:\\RAIDTEST\\superblock.dat");
+    HANDLE h = CreateFileW(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    ASSERT(h != INVALID_HANDLE_VALUE, "open for corrupt");
+    SetFilePointer(h, offsetof(SUPERBLOCK, checksum), NULL, FILE_BEGIN);
+    uint32_t bad_cs = 0xBADBAD;
+    DWORD written = 0;
+    WriteFile(h, &bad_cs, sizeof(bad_cs), &written, NULL);
+    CloseHandle(h);
+
+    /* Read back — should fail gracefully without crash */
+    SUPERBLOCK sb;
+    ASSERT(!superblock_read_raw(L"C:\\", &sb), "should fail on bad checksum");
+
+    /* Rewrite and verify clean read works (no stale handle state) */
+    ASSERT(superblock_write(&vol), "rewrite failed");
+    ASSERT(superblock_read_raw(L"C:\\", &sb), "rewrite read failed");
+    ASSERT_EQ(sb.magic, SUPERBLOCK_MAGIC, "magic after rewrite");
+
+    stripe_volume_destroy(&vol);
+    sb_disk_destroy(d0);
+    sb_disk_destroy(d1);
+    sb_cleanup();
+    printf("  PASS: sb_double_close_regression\n");
+    return true;
+}
+
 TEST(sb_blank_serial) {
     sb_cleanup();
     DISK_INFO* d0 = sb_disk_create(32ULL * 1024 * 1024, L"Blank A");

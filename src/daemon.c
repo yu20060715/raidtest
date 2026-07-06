@@ -1,14 +1,11 @@
 #include "daemon.h"
 #include "disk_scanner.h"
-#include "pool_io.h"
 #include "bench_io.h"
 #include "fuse_bridge.h"
 #include "config.h"
-#include "ram_cache.h"
+#include "volume_manager.h"
 #include "cmd_handler.h"
 #include "cleanup.h"
-#include "superblock.h"
-#include "journal.h"
 
 /* ---- Shared stop event ---- */
 static HANDLE g_daemon_stop = NULL;
@@ -68,30 +65,24 @@ static void daemon_process_stdin(HANDLE hStdin) {
 static bool daemon_load_volume(APP_STATE* state) {
     /* Scan all drives for superblock (metadata is on disk, not in JSON) */
     uint32_t loaded_count = 0;
-    if (superblock_read(NULL, &state->volume, state->loaded_disks, &loaded_count,
-                        state->physical_disks, state->physical_count)) {
-        state->disk_count = loaded_count;
+    if (volume_load(&state->vol.volume, state->disk.loaded_disks, &loaded_count,
+                    state->disk.physical_disks, state->disk.physical_count, NULL)) {
+        state->disk.disk_count = loaded_count;
         for (uint32_t i = 0; i < loaded_count; i++)
-            state->disks[i] = &state->loaded_disks[i];
-        state->volume_valid = true;
-
-        /* Journal recovery check */
-        journal_recover_all(&state->volume);
+            state->disk.disks[i] = &state->disk.loaded_disks[i];
+        state->vol.volume_valid = true;
 
         /* If superblock had cache feature, init cache */
-        if (state->volume.generation > 0) {
+        if (state->vol.volume.generation > 0) {
             uint64_t cache_size = (uint64_t)CACHE_DEFAULT_MB * 1024ULL * 1024ULL;
             APP_CONFIG cfg;
             config_defaults(&cfg);
             config_load(&cfg); /* Try JSON for cache size override only */
             if (cfg.cache_mb > 0) cache_size = (uint64_t)cfg.cache_mb * 1024ULL * 1024ULL;
 
-            if (cache_init(&state->volume.cache, cache_size)) {
-                state->volume.cache_enabled = true;
-                state->cache_on = true;
-                state->cache_mb = (uint32_t)(cache_size / (1024 * 1024));
-                state->volume.cache.flush_thread = state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
-                LOG_OK("Cache enabled: %u MB", state->cache_mb);
+            if (volume_cache_enable(&state->vol.volume, cache_size,
+                                    &state->cache.cache_on, &state->cache.cache_mb, &state->cache.flush_thread)) {
+                LOG_OK("Cache enabled: %u MB", state->cache.cache_mb);
             }
         }
         return true;
@@ -106,62 +97,48 @@ static bool daemon_load_volume(APP_STATE* state) {
         return false;
     }
 
-    if (!disk_scan_all(&state->physical_disks, &state->physical_count)) {
+    if (!disk_scan_all(&state->disk.physical_disks, &state->disk.physical_count)) {
         LOG_ERROR("No disks detected");
         return false;
     }
 
-    for (uint32_t i = 0; i < state->physical_count; i++) {
+    for (uint32_t i = 0; i < state->disk.physical_count; i++) {
         for (uint32_t j = 0; j < cfg.disk_count; j++) {
-            char dl = (char)state->physical_disks[i]->drive_letter[0];
+            char dl = (char)state->disk.physical_disks[i]->drive_letter[0];
             if (dl == cfg.disks[j].drive_letter) {
-                if (state->disk_count < MAX_DISKS) {
-                    disk_map_drive((char[]){dl, 0}, state->physical_disks[i]);
-                    state->pool_sizes_mb[state->disk_count] = cfg.disks[j].pool_mb;
-                    uint64_t size_bytes = cfg.disks[j].pool_mb * 1024ULL * 1024ULL;
-                    if (validate_pool_size(size_bytes) != RC_OK) {
+                if (state->disk.disk_count < MAX_DISKS) {
+                    disk_map_drive((char[]){dl, 0}, state->disk.physical_disks[i]);
+                    state->disk.pool_sizes_mb[state->disk.disk_count] = cfg.disks[j].pool_mb;
+                    if (!volume_create_pool_file(state->disk.physical_disks[i], cfg.disks[j].pool_mb)) {
                         LOG_ERROR("Invalid pool size %llu MB from config", (unsigned long long)cfg.disks[j].pool_mb);
                         continue;
                     }
-                    pool_file_create(state->physical_disks[i], size_bytes);
-                    state->disks[state->disk_count++] = state->physical_disks[i];
+                    state->disk.disks[state->disk.disk_count++] = state->disk.physical_disks[i];
                 }
                 break;
             }
         }
     }
 
-    if (state->disk_count < MIN_DISKS) {
+    if (state->disk.disk_count < MIN_DISKS) {
         LOG_ERROR("Not enough disks from config");
         return false;
     }
 
-    uint32_t d_opened = 0;
-    for (uint32_t i = 0; i < state->disk_count; i++) {
-        if (!pool_file_open(state->disks[i])) {
-            LOG_ERROR("Failed to open pool file for disk %u", i);
-            for (uint32_t j = 0; j < d_opened; j++) pool_file_close(state->disks[j]);
-            return false;
-        }
-        d_opened++;
-    }
-    if (!stripe_volume_create(&state->volume, state->disks, state->disk_count, DEFAULT_STRIPE_UNIT)) {
+    if (!volume_create(&state->vol.volume, state->disk.disks, state->disk.disk_count)) {
         LOG_ERROR("Failed to create volume from config");
         return false;
     }
-    state->volume_valid = true;
+    state->vol.volume_valid = true;
 
     if (cfg.cache_mb > 0) {
         uint64_t cache_size = (uint64_t)cfg.cache_mb * 1024ULL * 1024ULL;
-        if (cache_init(&state->volume.cache, cache_size)) {
-            state->volume.cache_enabled = true;
-            state->cache_on = true;
-            state->cache_mb = cfg.cache_mb;
-            state->volume.cache.flush_thread = state->flush_thread = (HANDLE)_beginthreadex(NULL, 0, cache_flush_thread, &state->volume, 0, NULL);
+        if (volume_cache_enable(&state->vol.volume, cache_size,
+                                &state->cache.cache_on, &state->cache.cache_mb, &state->cache.flush_thread)) {
             LOG_OK("Cache enabled: %u MB", cfg.cache_mb);
         }
     }
-    LOG_WARN("Loaded from JSON config (legacy) — superblock not found");
+    LOG_WARN("Loaded from JSON config (legacy) ??superblock not found");
     return true;
 }
 
@@ -170,10 +147,10 @@ static DWORD daemon_run(APP_STATE* state, HANDLE stop_ev) {
     if (!daemon_load_volume(state)) return 1;
 
     /* Mount if valid */
-    if (state->volume_valid && state->volume.mount_point[0]) {
-        if (fuse_mount_volume(&state->volume, state->volume.mount_point[0])) {
-            state->mounted = true;
-            LOG_OK("Daemon: mounted at %c:", state->volume.mount_point[0]);
+    if (state->vol.volume_valid && state->vol.volume.mount_point[0]) {
+        if (fuse_mount_volume(&state->vol.volume, state->vol.volume.mount_point[0])) {
+            state->rt.mounted = true;
+            LOG_OK("Daemon: mounted at %c:", state->vol.volume.mount_point[0]);
         }
     }
 
@@ -213,10 +190,10 @@ static DWORD WINAPI daemon_main(LPVOID arg) {
     config_load(&cfg);
 
     /* Mount if a mount point is configured */
-    char mount = cfg.mount_letter ? cfg.mount_letter : state->volume.mount_point[0];
-    if (mount && state->volume_valid) {
-        if (fuse_mount_volume(&state->volume, mount)) {
-            state->mounted = true;
+    char mount = cfg.mount_letter ? cfg.mount_letter : state->vol.volume.mount_point[0];
+    if (mount && state->vol.volume_valid) {
+        if (fuse_mount_volume(&state->vol.volume, mount)) {
+            state->rt.mounted = true;
             LOG_OK("Daemon: mounted at %c:", mount);
         }
     }

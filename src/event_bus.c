@@ -45,18 +45,6 @@ void event_bus_subscribe(EVENT_TYPE type, event_callback cb, void* userdata) {
     LeaveCriticalSection(&g_eb_cs);
 }
 
-void event_bus_unsubscribe(EVENT_TYPE type, event_callback cb) {
-    if (!g_eb_inited || !cb || type >= EVENT_COUNT) return;
-    EnterCriticalSection(&g_eb_cs);
-    for (int i = 0; i < MAX_SUBSCRIBERS_PER_EVENT; i++) {
-        if (g_subs[type][i].active && g_subs[type][i].cb == cb) {
-            g_subs[type][i].active = false;
-            break;
-        }
-    }
-    LeaveCriticalSection(&g_eb_cs);
-}
-
 void event_bus_publish(EVENT_TYPE type, const char* data) {
     if (!g_eb_inited || type >= EVENT_COUNT) return;
     EnterCriticalSection(&g_eb_cs);
@@ -69,13 +57,4 @@ void event_bus_publish(EVENT_TYPE type, const char* data) {
         }
     }
     LeaveCriticalSection(&g_eb_cs);
-}
-
-void event_bus_display(void) {
-    if (!g_eb_inited) return;
-    LOG_INFO("Event bus has %d event types with subscribers", EVENT_COUNT);
-}
-
-void event_bus_flush_to_file(void) {
-    /* No-op: file logging is handled by the subscriber in raid_service */
 }

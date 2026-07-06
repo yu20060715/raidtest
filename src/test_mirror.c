@@ -1,6 +1,7 @@
 #include "test_common.h"
 #include "mirror_engine.h"
 #include "stripe_engine.h"
+#include "storage_common.h"
 #include "ram_cache.h"
 
 static bool test_mirror_create_2disks(void) {

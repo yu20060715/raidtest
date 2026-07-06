@@ -22,9 +22,6 @@ typedef void (*event_callback)(EVENT_TYPE type, const char* data, void* userdata
 
 void event_bus_init(void);
 void event_bus_subscribe(EVENT_TYPE type, event_callback cb, void* userdata);
-void event_bus_unsubscribe(EVENT_TYPE type, event_callback cb);
 void event_bus_publish(EVENT_TYPE type, const char* data);
-void event_bus_flush_to_file(void);
-void event_bus_display(void);
 
 const char* event_type_str(EVENT_TYPE type);

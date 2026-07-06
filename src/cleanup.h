@@ -2,6 +2,7 @@
 #include "common.h"
 #include "cmd_handler.h"
 
+void cleanup_volume_cache(STRIPE_VOLUME* vol);
 void cleanup_cache(APP_STATE* state);
 void cleanup_volume(APP_STATE* state);
 void cleanup_pool_files(APP_STATE* state);

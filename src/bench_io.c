@@ -1,4 +1,5 @@
 #include "bench_io.h"
+#include "stripe_engine.h"
 #include "ram_cache.h"
 
 bool bench_single_disk(DISK_INFO* disk, uint32_t size_mb) {

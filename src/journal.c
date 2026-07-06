@@ -1,20 +1,6 @@
 #include "journal.h"
+#include "stripe_engine.h"
 #include "logger.h"
-
-/* ---- CRC32 (same as superblock.c) ---- */
-static uint32_t crc32(const uint8_t* data, size_t len) {
-    uint32_t table[256];
-    for (uint32_t i = 0; i < 256; i++) {
-        uint32_t crc = i;
-        for (uint32_t j = 0; j < 8; j++)
-            crc = (crc >> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
-        table[i] = crc;
-    }
-    uint32_t crc = 0xFFFFFFFF;
-    for (size_t i = 0; i < len; i++)
-        crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    return crc ^ 0xFFFFFFFF;
-}
 
 static uint64_t get_filetime_now(void) {
     FILETIME ft;
@@ -151,10 +137,13 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
                 begin_gen = je.generation; range_count = 0;
             } else if (je.entry_type == JT_DATA && has_begin && !has_commit) {
                 if (je.version >= 2 && range_count < 256 && offset + payload <= read) {
-                    ranges[range_count].off = je.virtual_offset;
-                    ranges[range_count].len = je.length;
-                    ranges[range_count].data_off = offset;
-                    range_count++;
+                    uint32_t payload_crc = crc32(raw + offset, payload);
+                    if (payload_crc == je.data_crc) {
+                        ranges[range_count].off = je.virtual_offset;
+                        ranges[range_count].len = je.length;
+                        ranges[range_count].data_off = offset;
+                        range_count++;
+                    }
                 }
             } else if (je.entry_type == JT_COMMIT && has_begin) {
                 has_commit = true;

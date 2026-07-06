@@ -1,24 +1,42 @@
 #pragma once
 #include "common.h"
-#include "stripe_engine.h"
-#include "ram_cache.h"
 
 typedef struct {
     DISK_INFO*     disks[MAX_CUSTOM_DISKS];
     uint32_t       disk_count;
     uint64_t       pool_sizes_mb[MAX_DISKS];
-    STRIPE_VOLUME  volume;
-    bool           volume_valid;
     DISK_INFO**    physical_disks;
     uint32_t       physical_count;
     DISK_INFO      loaded_disks[MAX_DISKS];
+} DiskState;
+
+typedef struct {
+    STRIPE_VOLUME  volume;
+    bool           volume_valid;
+} VolumeState;
+
+typedef struct {
     bool           cache_on;
     uint32_t       cache_mb;
     HANDLE         flush_thread;
-    bool           mounted;
+} CacheState;
+
+typedef struct {
     RAID_STATE     state;
-    APP_CONFIG     config;
+    bool           mounted;
     wchar_t        appdata_path[MAX_DRIVE_PATH];
+} RuntimeState;
+
+typedef struct {
+    APP_CONFIG     config;
+} ConfigState;
+
+typedef struct {
+    DiskState      disk;
+    VolumeState    vol;
+    CacheState     cache;
+    RuntimeState   rt;
+    ConfigState    cfg;
 } APP_STATE;
 
 extern APP_STATE g_state;

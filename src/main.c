@@ -3,34 +3,32 @@
 #include "daemon.h"
 #include "wizard.h"
 #include "fuse_bridge.h"
-#include "pool_io.h"
 #include "disk_scanner.h"
-#include "ram_cache.h"
 #include "cleanup.h"
 #include "gui.h"
 
 static void do_restore(char mount_letter) {
-    if (g_state.config.disk_count == 0) { LOG_ERROR("No config to restore"); return; }
-    LOG_INFO("Restoring from config (%u disks, mount at %c:)...", g_state.config.disk_count, mount_letter);
-    if (!g_state.physical_disks) {
-        if (!disk_scan_all(&g_state.physical_disks, &g_state.physical_count)) {
+    if (g_state.cfg.config.disk_count == 0) { LOG_ERROR("No config to restore"); return; }
+    LOG_INFO("Restoring from config (%u disks, mount at %c:)...", g_state.cfg.config.disk_count, mount_letter);
+    if (!g_state.disk.physical_disks) {
+        if (!disk_scan_all(&g_state.disk.physical_disks, &g_state.disk.physical_count)) {
             LOG_ERROR("No disks detected"); return;
         }
     }
     char cmd[512]; int pos = 0;
     pos += snprintf(cmd + pos, 512 - (size_t)pos, "select");
-    for (uint32_t i = 0; i < g_state.config.disk_count; i++)
-        pos += snprintf(cmd + pos, 512 - (size_t)pos, " %u", g_state.config.disks[i].disk_id);
+    for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++)
+        pos += snprintf(cmd + pos, 512 - (size_t)pos, " %u", g_state.cfg.config.disks[i].disk_id);
     cmd_process(cmd);
 
     pos = snprintf(cmd, 512, "init");
-    for (uint32_t i = 0; i < g_state.config.disk_count; i++)
-        pos += snprintf(cmd + pos, 512 - (size_t)pos, " %u:%llu", g_state.config.disks[i].disk_id,
-              (unsigned long long)g_state.config.disks[i].pool_mb);
+    for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++)
+        pos += snprintf(cmd + pos, 512 - (size_t)pos, " %u:%llu", g_state.cfg.config.disks[i].disk_id,
+              (unsigned long long)g_state.cfg.config.disks[i].pool_mb);
     cmd_process(cmd);
     cmd_process("create");
 
-    char cache_arg[16]; snprintf(cache_arg, 16, "%u", g_state.config.cache_mb);
+    char cache_arg[16]; snprintf(cache_arg, 16, "%u", g_state.cfg.config.cache_mb);
     char* cache_av[] = { cache_arg };
     cmd_cache(1, cache_av);
 
@@ -52,10 +50,10 @@ static int cli_main(int argc, char* argv[]) {
                     cmd_process_auto(argv[2]);
                 }
             } else {
-                do_restore(g_state.config.mount_letter ? g_state.config.mount_letter : 'G');
+                do_restore(g_state.cfg.config.mount_letter ? g_state.cfg.config.mount_letter : 'G');
             }
-            if (g_state.mounted)
-                printf("\n  Volume mounted at %c:. Type 'exit' to unmount.\n\n", g_state.volume.mount_point[0]);
+            if (g_state.rt.mounted)
+                printf("\n  Volume mounted at %c:. Type 'exit' to unmount.\n\n", g_state.vol.volume.mount_point[0]);
         } else if (strcmp(argv[1], "--wizard") == 0) {
             wizard_run(&g_state);
         } else if (strcmp(argv[1], "--daemon") == 0) {
@@ -67,8 +65,8 @@ static int cli_main(int argc, char* argv[]) {
         } else if (strcmp(argv[1], "--quick") == 0) {
             cmd_process("quick");
         } else if (strcmp(argv[1], "--cli") == 0) {
-            if (g_state.config.disk_count > 0) {
-                do_restore(g_state.config.mount_letter ? g_state.config.mount_letter : 'G');
+            if (g_state.cfg.config.disk_count > 0) {
+                do_restore(g_state.cfg.config.mount_letter ? g_state.cfg.config.mount_letter : 'G');
             } else {
                 cmd_process("quick");
             }
@@ -78,9 +76,9 @@ static int cli_main(int argc, char* argv[]) {
             cmd_process_auto(full_cmd);
         }
     } else {
-        if (g_state.config.disk_count > 0) {
+        if (g_state.cfg.config.disk_count > 0) {
             printf("\n  Restoring from saved config...\n");
-            do_restore(g_state.config.mount_letter ? g_state.config.mount_letter : 'G');
+            do_restore(g_state.cfg.config.mount_letter ? g_state.cfg.config.mount_letter : 'G');
         } else {
             printf("\n  No config found. Entering quick setup...\n");
             cmd_process("quick");

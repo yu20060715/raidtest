@@ -13,6 +13,4 @@ typedef enum {
 void log_init(void);
 void log_cleanup(void);
 void log_set_level(LOG_LEVEL min_level);
-void log_set_file(const char* path);
-void log_set_timestamp(bool enable);
 void log_printf(LOG_LEVEL level, const char* fmt, ...);

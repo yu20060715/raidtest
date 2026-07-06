@@ -1,6 +1,5 @@
 #pragma once
 #include "common.h"
-#include "stripe_engine.h"
 
 #define BENCH_PASSES        10
 

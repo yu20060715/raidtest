@@ -6,8 +6,6 @@ bool stripe_volume_expand(STRIPE_VOLUME* vol, DISK_INFO** new_disks, uint32_t ne
 void stripe_volume_destroy(STRIPE_VOLUME* vol);
 bool stripe_volume_map_lba(const STRIPE_VOLUME* vol, uint64_t virtual_offset,
                            IO_MAPPING_ENTRY* entries, uint32_t* out_count, uint32_t request_length);
-bool stripe_read_raw(DISK_INFO* disk, void* buffer, uint64_t offset, uint32_t length);
-bool stripe_write_raw(DISK_INFO* disk, const void* buffer, uint64_t offset, uint32_t length);
 bool stripe_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offset, uint32_t length);
 bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtual_offset, uint32_t length);
 bool stripe_volume_dump_mapping(const STRIPE_VOLUME* vol, uint64_t start, uint64_t end);

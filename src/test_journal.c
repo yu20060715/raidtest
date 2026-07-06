@@ -199,6 +199,78 @@ static bool test_journal_no_journal(void) {
     return true;
 }
 
+/* Regression: corrupted payload CRC — entry should be skipped during recovery */
+TEST(journal_corrupted_payload) {
+    ASSERT(ensure_raidtest_dir(), "cannot create C:\\RAIDTEST\\");
+    remove_journal_file();
+
+    DISK_INFO* d0 = journal_disk_create(16ULL * 1024 * 1024);
+    DISK_INFO* d1 = journal_disk_create(16ULL * 1024 * 1024);
+    ASSERT(d0 && d1, "disk create failed");
+    DISK_INFO* disks[] = {d0, d1};
+    STRIPE_VOLUME vol;
+    ASSERT(stripe_volume_create(&vol, disks, 2, 1024 * 1024), "create failed");
+
+    /* Write initial data to volume */
+    uint8_t init_data[1024];
+    test_fill_pattern(init_data, 1024, 0xAA);
+    ASSERT(stripe_volume_write(&vol, init_data, 0, 1024), "initial write failed");
+
+    /* Manually construct corrupted journal: BEGIN + DATA(bad payload CRC) + (no COMMIT) */
+    wchar_t jpath[MAX_DRIVE_PATH];
+    wcscpy_s(jpath, MAX_DRIVE_PATH, L"C:\\RAIDTEST\\journal.dat");
+    HANDLE h = CreateFileW(jpath, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    ASSERT(h != INVALID_HANDLE_VALUE, "create journal failed");
+
+    JOURNAL_ENTRY begin;
+    memset(&begin, 0, sizeof(begin));
+    begin.magic = JOURNAL_MAGIC;
+    begin.version = JOURNAL_VERSION;
+    begin.entry_type = JT_BEGIN;
+    begin.generation = 1;
+    begin.timestamp = 1000;
+    begin.checksum = crc32((const uint8_t*)&begin, offsetof(JOURNAL_ENTRY, checksum));
+
+    uint8_t payload[64];
+    memset(payload, 0xFF, 64);
+
+    JOURNAL_ENTRY data;
+    memset(&data, 0, sizeof(data));
+    data.magic = JOURNAL_MAGIC;
+    data.version = JOURNAL_VERSION;
+    data.entry_type = JT_DATA;
+    data.generation = 1;
+    data.virtual_offset = 0;
+    data.length = 64;
+    data.timestamp = 1001;
+    data.data_crc = 0xDEADBEEF;  /* Wrong CRC — doesn't match 0xFF payload */
+    data.checksum = crc32((const uint8_t*)&data, offsetof(JOURNAL_ENTRY, checksum));
+
+    DWORD written = 0;
+    WriteFile(h, &begin, sizeof(begin), &written, NULL);
+    WriteFile(h, &data, sizeof(data), &written, NULL);
+    WriteFile(h, payload, sizeof(payload), &written, NULL);
+    CloseHandle(h);
+
+    /* Recover — should skip the corrupted DATA entry (CRC mismatch) */
+    bool recovered = journal_recover_all(&vol);
+    ASSERT(!recovered, "should be dirty (no commit, entry skipped)");
+
+    /* Verify initial data was NOT overwritten by recovered corrupt entry */
+    uint8_t rbuf[1024];
+    memset(rbuf, 0, 1024);
+    ASSERT(stripe_volume_read(&vol, rbuf, 0, 1024), "read after recover failed");
+    ASSERT(memcmp(init_data, rbuf, 1024) == 0, "data should not have been replayed");
+
+    stripe_volume_destroy(&vol);
+    test_disk_destroy(d0);
+    test_disk_destroy(d1);
+    remove_journal_file();
+    printf("  PASS: journal_corrupted_payload\n");
+    return true;
+}
+
 TEST(journal_roundtrip)          { return test_journal_roundtrip(); }
 TEST(journal_recover_clean)      { return test_journal_recover_clean(); }
 TEST(journal_recover_replay)     { return test_journal_recover_replay(); }

@@ -1,0 +1,628 @@
+我覺得你需要的不是 README，而是一份 **AI_PROJECT_SPEC.md**。
+
+這份文件的目的不是給人看，而是給 **OPENCODE、Claude Code、Gemini CLI、Cursor、Codex** 等 AI 看。
+
+只要每次新開 AI，把這份貼上去，它就知道：
+
+> **這個專案是什麼**
+>
+> **不能做什麼**
+>
+> **什麼才叫完成**
+
+避免 AI 每次都開始亂加功能（RAID5、NAS、網路同步、Linux Driver...）。
+
+---
+
+# AI_PROJECT_SPEC.md
+
+# RAIDTEST Project Specification (AI Context)
+
+Version: v1.0
+Author: Yu
+
+---
+
+# 一、專案目標（Project Goal）
+
+本專案是一個 Windows 平台上的 RAID0 驗證專案。
+
+目的不是打造企業級 RAID 軟體。
+
+也不是取代 Windows Storage Spaces。
+
+更不是做 NAS。
+
+更不是做 Linux mdadm。
+
+本專案主要目標只有一個：
+
+> **驗證不同容量、不同速度的 SSD / HDD 是否可以透過軟體整合成一個大型 Volume，並提供簡單 GUI 操作與完整實驗驗證。**
+
+本專案定位：
+
+> **大學畢業專題**
+
+因此：
+
+完成度
+
+>
+
+可靠度
+
+>
+
+程式架構
+
+>
+
+Demo 展示
+
+遠高於
+
+功能數量。
+
+---
+
+# 二、專案核心理念
+
+核心理念只有四句：
+
+1.
+
+不同容量可以整合
+
+例如
+
+256GB
+
+500GB
+
+1TB
+
+2TB
+
+全部組成一個 Volume。
+
+不是只能同容量。
+
+---
+
+2.
+
+不同速度可以共同使用
+
+例如：
+
+NVMe
+
+SATA SSD
+
+HDD
+
+全部共同組成 RAID0。
+
+容量最大化。
+
+---
+
+3.
+
+不要浪費容量
+
+不要因 RAID 傳統限制造成：
+
+500G + 2TB
+
+最後只能得到 1TB。
+
+而是盡可能利用全部容量。
+
+（Planner 會協助規劃）
+
+---
+
+4.
+
+Windows 一般使用者可以操作
+
+GUI 為主。
+
+CLI 為輔。
+
+---
+
+# 三、不做的事情（Out of Scope）
+
+以下全部不是目前目標。
+
+AI 不可以自行新增。
+
+❌ RAID5
+
+❌ RAID6
+
+❌ RAID50
+
+❌ RAID60
+
+❌ ZFS
+
+❌ NAS
+
+❌ SMB
+
+❌ 網路共享
+
+❌ 雲端同步
+
+❌ Linux
+
+❌ macOS
+
+❌ Android
+
+❌ 熱備援
+
+❌ Snapshot
+
+❌ Encryption
+
+❌ Compression
+
+❌ Deduplication
+
+❌ Enterprise Cluster
+
+❌ Storage Spaces Replacement
+
+除非使用者明確要求。
+
+---
+
+# 四、目前允許功能
+
+目前只允許：
+
+## RAID0
+
+主要功能。
+
+必須完成。
+
+---
+
+RAID1
+
+保留。
+
+方便展示 Mirror Engine。
+
+不是重點。
+
+---
+
+Planner
+
+容量規劃。
+
+必須存在。
+
+---
+
+Metadata
+
+Superblock
+
+Journal
+
+UUID
+
+CRC
+
+必須存在。
+
+---
+
+GUI
+
+主要操作介面。
+
+必須存在。
+
+---
+
+CLI
+
+除錯用途。
+
+必須存在。
+
+---
+
+Benchmark
+
+測試速度。
+
+必須存在。
+
+---
+
+Stress Test
+
+必須存在。
+
+---
+
+Validation
+
+必須存在。
+
+---
+
+# 五、真正要展示的功能
+
+使用者 Demo 流程：
+
+Step1
+
+Scan Disk
+
+↓
+
+看到：
+
+Disk0
+
+Disk1
+
+Disk2
+
+Disk3
+
+Serial
+
+Size
+
+Speed
+
+Health
+
+---
+
+Step2
+
+選擇磁碟
+
+GUI Checkbox
+
+---
+
+Step3
+
+Planner
+
+立即顯示：
+
+可用容量
+
+浪費容量
+
+最佳配置
+
+---
+
+Step4
+
+Create RAID
+
+建立 Stripe。
+
+---
+
+Step5
+
+Mount
+
+建立虛擬 Volume。
+
+Windows 可看到新磁碟。
+
+---
+
+Step6
+
+Benchmark
+
+測試：
+
+Read
+
+Write
+
+Latency
+
+IOPS
+
+---
+
+Step7
+
+Unmount
+
+---
+
+Step8
+
+Reload
+
+證明 Metadata 可恢復。
+
+---
+
+Step9
+
+Destroy
+
+完整刪除。
+
+---
+
+# 六、架構目標
+
+永遠維持：
+
+GUI
+
+↓
+
+raid_service
+
+↓
+
+Manager
+
+↓
+
+Engine
+
+↓
+
+Storage
+
+GUI 不可以直接呼叫 Engine。
+
+CLI 不可以直接修改 Metadata。
+
+所有功能經過 Service。
+
+---
+
+# 七、目前完成度
+
+目前：
+
+Service Layer
+
+Manager Layer
+
+Planner
+
+Metadata
+
+UUID
+
+Journal
+
+GUI
+
+CLI
+
+Tests
+
+Validation
+
+皆已存在。
+
+後續新增功能不得破壞此架構。
+
+---
+
+# 八、目前最重要工作
+
+不是新增功能。
+
+而是：
+
+提升可靠度。
+
+包括：
+
+Bug Fix
+
+Code Review
+
+Validation
+
+Stress Test
+
+Performance
+
+Resource Leak
+
+Memory Leak
+
+Thread Safety
+
+---
+
+# 九、目前禁止事項
+
+AI 不得自行：
+
+新增大型 Feature
+
+修改架構
+
+改 API
+
+新增第三方 Framework
+
+更換 GUI
+
+重新設計 Metadata
+
+修改 Superblock Format
+
+新增 RAID Level
+
+除非使用者要求。
+
+---
+
+# 十、Driver 規劃
+
+目前：
+
+WinFsp
+
+File-backed Volume
+
+即可。
+
+不要自行開發 Kernel Driver。
+
+Kernel Driver 為：
+
+第二階段。
+
+不是目前目標。
+
+---
+
+# 十一、第二階段（Future）
+
+完成第一階段後才考慮：
+
+Native Driver
+
+真正 Block Device
+
+Linux
+
+RAID5
+
+跨平台
+
+NVMe Direct
+
+不是現在。
+
+---
+
+# 十二、AI 工作原則
+
+AI 每次修改前：
+
+先確認：
+
+是否符合：
+
+Project Goal
+
+若不符合：
+
+不要新增。
+
+優先順序：
+
+1.
+
+Bug Fix
+
+↓
+
+2.
+
+Validation
+
+↓
+
+3.
+
+Performance
+
+↓
+
+4.
+
+GUI 體驗
+
+↓
+
+5.
+
+Documentation
+
+↓
+
+6.
+
+新功能
+
+---
+
+# 十三、Definition of Done（真正完成）
+
+本專案完成的條件不是：
+
+功能很多。
+
+而是：
+
+✅ GUI 可完整操作
+
+✅ 可 Scan
+
+✅ 可 Create
+
+✅ 可 Mount
+
+✅ 可 Reload
+
+✅ 可 Benchmark
+
+✅ Metadata 可恢復
+
+✅ Tests 全部 PASS
+
+✅ Stress Test PASS
+
+✅ Memory Leak = 0
+
+✅ Resource Leak = 0
+
+✅ Thread Safe
+
+✅ 文件完整
+
+✅ Demo 可順利展示
+
+即可視為 v1.0 正式完成。
+
+---
+
+## 我建議再加一份更重要的文件：**AI_GUARDRAILS.md**
+
+如果 `AI_PROJECT_SPEC.md` 是「專案說明書」，那 `AI_GUARDRAILS.md` 就是「AI 行為規範」。
+
+裡面會明確規定，例如：
+
+* **不能因為覺得功能不足就自行新增 RAID5、Linux、Driver 等大型功能。**
+* **不能重構已穩定的架構，只能在現有架構上改進。**
+* **所有修改都要以「大學專題完成度」為第一優先，而不是企業級產品。**
+* **每次開始工作前，都要先輸出目前完成度、此次修改目的、可能影響，再開始修改。**
+* **每次完成後，都要產出固定格式的 Sprint Report、變更摘要、風險分析、下一步建議。**
+
+這兩份文件一起使用，幾乎所有 AI（包括 OPENCODE）都能在新的對話中快速理解你的專案定位，不容易偏離方向，也能維持一致的開發流程。這會比只靠聊天上下文穩定得多。

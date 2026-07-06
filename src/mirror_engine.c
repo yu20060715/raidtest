@@ -1,8 +1,7 @@
 #include "mirror_engine.h"
-#include "stripe_engine.h"
+#include "storage_common.h"
 #include "ram_cache.h"
 #include "logger.h"
-#include <windows.h>
 
 bool mirror_volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
     if (!vol || !disks || disk_count < MIN_MIRROR_DISKS || disk_count > MAX_DISKS) return false;
