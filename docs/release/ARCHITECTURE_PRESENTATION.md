@@ -124,24 +124,25 @@ Click [Mount]. WinFsp FUSE filesystem registered as `G:\`. Write-back
 cache initialized (64 KB blocks, async flush thread). Journal replays
 any uncommitted WAL entries from previous crashes.
 
-### Segment 5: File I/O (30s)
-Create/save a file on `G:\`. Data path: FUSE → mirror engine (write-to-all)
-→ cache (dirty/valid bitmaps) → journal (WAL entry) → async OVERLAPPED I/O.
+### Segment 5: Create Demo File (30s)
+Create `RAIDV3_DEMO.txt` on `G:\`. Data path: FUSE → mirror engine
+(write-to-all) → cache (dirty/valid bitmaps) → journal (WAL entry) →
+async OVERLAPPED I/O.
 
-### Segment 6: Unmount (30s)
-Flush dirty cache blocks, commit journal, unregister FUSE filesystem.
-Pool files + superblock preserved on disk.
+### Segment 6: Simulate Disk Failure (30s)
+Switch to Developer tab → Simulation Controls → Inject fault on disk 0.
+Error counter triggers `InterlockedExchange(&disk->faulty, 1)`.
+Volume enters DEGRADED mode. Data still accessible from healthy mirror member.
 
-### Segment 7: Restore (30s)
-Scan → Restore from Saved Config. Re-reads JSON config, recreates pool
-files, reapplies superblock. Proves persistence.
+### Segment 7: Show DEGRADED + Rebuild (1 min)
+Volume Info shows yellow DEGRADED badge. System continues serving reads/writes
+from remaining healthy disk. Run Rebuild wizard → 64MB chunks copied from
+healthy disk to replacement → `FlushFileBuffers()` after each chunk.
+State returns to MOUNTED with full redundancy restored.
 
-### Segment 8: Developer Mode — Simulation (30s bonus)
-Switch to Developer tab. Shows live performance dashboard (IOPS, latency,
-throughput plots). **NEW**: Simulation controls let you inject disk faults
-directly from GUI. Click "Simulate Fail" on a disk → state shows
-"DEGRADED" (yellow). Run Rebuild wizard → state returns to "MOUNTED".
-State machine now fully visible and interactive.
+### Segment 8: Verify Recovered Data (30s)
+Open the demo file on `G:\`. Content preserved through failure and rebuild.
+Confirms RAID1 fault tolerance: disk failure → degraded mode → rebuild → zero data loss.
 
 ### Fallback: CLI Mode
 If GUI fails (no D3D11), run `raidtest_winfsp.exe --cli`. All 31 commands

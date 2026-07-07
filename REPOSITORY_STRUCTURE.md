@@ -141,19 +141,15 @@ docs/
 ├── learning/                   # Tutorials & learning
 │   └── LEARNING_GUIDE.md       #   System internals tutorial
 │
-├── release/                    # Demo package (operator-facing)
-│   ├── FINAL_DEMO_OPERATOR_GUIDE.md    # Complete operator manual
-│   ├── DEMO_DOCUMENT_MAP.md           # Document classification (A/B/C/D/E)
-│   ├── DEMO_PACKAGE_STRUCTURE.md      # Recommended repo layout
-│   ├── FINAL_DEMO_OPERATOR_TRAINING_REPORT.md # Session report
-│   ├── ARCHITECTURE_PRESENTATION.md   # Architecture diagram and demo
-│   ├── BUILD_STATUS.md         #   Build/test validation
-│   ├── CAPSTONE_DEMO_PLAN.md   #   10-segment demo script
-│   ├── DEMO_RUN_CHECKLIST.md   #   Pre-demo + live checklist
-│   ├── FEATURE_MATRIX.md       #   66-feature classification
+├── release/                    # Presentation package (8 files)
 │   ├── PRESENTATION_SCRIPT.md  #   10-section spoken script
 │   ├── PROFESSOR_QA.md         #   27 prepared Q&A with evidence
-│   └── RELEASE_CHECKLIST.md    #   Release verification steps
+│   ├── BUILD_STATUS.md         #   Build/test validation
+│   ├── ARCHITECTURE_PRESENTATION.md   # Architecture diagram and demo
+│   ├── FEATURE_MATRIX.md       #   66-feature classification
+│   ├── CAPSTONE_DEMO_PLAN.md   #   10-segment demo plan
+│   ├── FINAL_DEMO_OPERATOR_GUIDE.md    # Complete operator manual
+│   └── DEMO_RUN_CHECKLIST.md   #   Pre-demo + live checklist
 │
 ├── research/                   # (reserved for future research notes)
 │

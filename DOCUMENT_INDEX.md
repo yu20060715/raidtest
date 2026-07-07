@@ -1,7 +1,7 @@
 # RAIDTEST v1.0 RC4 — Document Index (codename: RAIDV3)
 
 **Purpose**: Master index of all documentation — find any file by name, location, and status.
-**Last updated**: 2026-07-07
+**Last updated**: 2026-07-08
 
 ## Status Legend
 
@@ -75,22 +75,18 @@
 
 ---
 
-## `docs/release/` — Release Artifacts (Demo Package)
+## `docs/release/` — Presentation Package (8 files)
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `FINAL_DEMO_OPERATOR_GUIDE.md` | Complete operator training manual (6 sections) | ACTIVE |
-| `DEMO_DOCUMENT_MAP.md` | Document classification: A/B/C/D/E for demo day | ACTIVE |
-| `DEMO_PACKAGE_STRUCTURE.md` | Recommended final repository structure | ACTIVE |
-| `FINAL_DEMO_OPERATOR_TRAINING_REPORT.md` | Operator training session report | ACTIVE |
-| `ARCHITECTURE_PRESENTATION.md` | Architecture diagram and innovation explanation | ACTIVE |
-| `BUILD_STATUS.md` | Capstone final build and test validation | ACTIVE |
-| `CAPSTONE_DEMO_PLAN.md` | 10-segment demo script for professor review | ACTIVE |
-| `DEMO_RUN_CHECKLIST.md` | Pre-demo prep and live demo checklist | ACTIVE |
-| `FEATURE_MATRIX.md` | 66-feature classification with GUI/CLI entries | ACTIVE |
 | `PRESENTATION_SCRIPT.md` | Capstone presentation script (10 sections) | ACTIVE |
 | `PROFESSOR_QA.md` | Prepared Q&A with source evidence (27 Q&A) | ACTIVE |
-| `RELEASE_CHECKLIST.md` | Pre-release verification steps | ACTIVE |
+| `BUILD_STATUS.md` | Capstone final build and test validation | ACTIVE |
+| `ARCHITECTURE_PRESENTATION.md` | Architecture diagram and innovation explanation | ACTIVE |
+| `FEATURE_MATRIX.md` | 66-feature classification with GUI/CLI entries | ACTIVE |
+| `CAPSTONE_DEMO_PLAN.md` | 10-segment demo plan for professor review | ACTIVE |
+| `FINAL_DEMO_OPERATOR_GUIDE.md` | Complete operator manual (6 sections) | ACTIVE |
+| `DEMO_RUN_CHECKLIST.md` | Pre-demo prep and live demo checklist | ACTIVE |
 
 ---
 
@@ -123,6 +119,10 @@
 
 | File | Purpose | Status |
 |------|---------|--------|
+| `DEMO_DOCUMENT_MAP.md` | Document classification: A/B/C/D/E for demo day | ARCHIVED |
+| `DEMO_PACKAGE_STRUCTURE.md` | Recommended final repository structure | ARCHIVED |
+| `FINAL_DEMO_OPERATOR_TRAINING_REPORT.md` | Operator training session report | ARCHIVED |
+| `RELEASE_CHECKLIST.md` | Pre-release verification steps | ARCHIVED |
 | `FINAL_DEMO_REHEARSAL.md` | Final demo rehearsal report | ARCHIVED |
 | `DEMO_ENVIRONMENT_REPORT.md` | Environment audit for demo | ARCHIVED |
 | `DEMO_FLOW_AUDIT.md` | 9-step demo flow trace | ARCHIVED |
@@ -201,8 +201,11 @@ file inventory and `SYSTEM_MAP.md` for module descriptions.
 | `FUTURE_ROADMAP.md` | root | `docs/development/` | Development doc |
 | `BUG_VERIFICATION.md` | root | `docs/development/` | Development doc |
 | `LEARNING_GUIDE.md` | root | `docs/learning/` | Learning doc |
-| `RELEASE_CHECKLIST.md` | root | `docs/release/` | Release doc |
-| `RELEASE_VERIFICATION.md` | root | `docs/release/` | Release doc |
+| `RELEASE_CHECKLIST.md` | root | `docs/release/` → `docs/archive/` | Release doc → archived |
+| `RELEASE_VERIFICATION.md` | root | `docs/release/` → `docs/archive/` | Release doc → archived |
+| `DEMO_DOCUMENT_MAP.md` | `docs/release/` | `docs/archive/` | Rehearsal doc → archived |
+| `DEMO_PACKAGE_STRUCTURE.md` | `docs/release/` | `docs/archive/` | Rehearsal doc → archived |
+| `FINAL_DEMO_OPERATOR_TRAINING_REPORT.md` | `docs/release/` | `docs/archive/` | Rehearsal doc → archived |
 | `_build.sh` | root | `ARCHIVE/` | Redundant script |
 | `_check.sh` | root | `ARCHIVE/` | Redundant script |
 | `Craidtest_8.dat` | root | `Craidtest_8.dat` | Generated artifact (gitignored) |

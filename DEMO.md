@@ -1,203 +1,154 @@
-# RAIDTEST v1.0 RC4 — Demo Walkthrough
+# RAIDTEST v1.0 RC4 — Quick Demo Walkthrough
 
-> **Target time:** 8–10 minutes
+> **Target time:** 5–6 minutes
 > **Prerequisites:** Windows 10/11, WinFsp installed, Administrator privileges
+> **See also:** `docs/release/FINAL_DEMO_OPERATOR_GUIDE.md` (full operator manual)
 
 ---
 
 ## Step 1: Launch
 
-**Action:** Double-click `raidtest.exe` (or run from an Admin terminal)
+**Action:** Double-click `raidtest_winfsp.exe` (or run from an Admin terminal)
 
 **Expected screen:**
 - Dark-themed GUI window, maximized
 - Mode tabs: Beginner | **Advanced** | Developer (Advanced selected)
 - Top toolbar: Scan, Create, Mirror, Mount, Unmount, Destroy, Bench buttons
-- Left panel: Physical Disks table (empty: "0 disk(s)")
-- Right panel: Volume Info (shows "No volume — Scan + Create first")
-- Bottom: Event Log (empty), Status Bar ("Ready — 0 disk(s) detected")
+- Left panel: Physical Disks table (empty)
+- Right panel: Volume Info ("No volume — Scan + Create first")
 
 **If failure:**
-- "Failed to create DirectX 11 device": GPU/driver too old (try updating GPU drivers)
+- "Failed to create DirectX 11 device": update GPU drivers or use `--cli` mode
 - "Failed to create window": another instance may be running
 
 ---
 
 ## Step 2: Scan Disks
 
-**Action:** Click **Scan** button (top toolbar)
+**Action:** Click **Scan**
 
 **Expected screen:**
-- Status bar shows yellow `[Scanning disks...]` with progress bar
+- Status bar: yellow `[Scanning disks...]`
 - Event Log: `[INFO] Scan: OK (2 disk(s) found)`
-- Physical Disks table populates with detected drives:
-  - Model, ID, Serial, Type, Bus, Size, Speed, Status
-- Planner panel (below disk table) activates
-- Status changes to "Ready — 2 disk(s) detected"
+- Physical Disks table populates with Model, Serial, Type, Bus, Size, Speed
+- Checkboxes appear in "Use" column
 
 **If failure:**
-- "Scan: FAILED": run as Administrator (physical disk access denied)
+- "Scan: FAILED": run as Administrator
 
 ---
 
-## Step 3: Create RAID0 Volume
+## Step 3: Create RAID1 Mirror
 
 **Action:**
-- Ensure at least 2 disks are checked in the **Use** column (far right)
-- Click **Create**
+- Check 2 disks in the **Use** column
+- Click **Mirror**
 
 **Expected screen:**
-- Status bar: yellow `[Creating volume...]` with progress bar
-- Event Log: `[INFO] Create: OK — Volume is ready for mount`
-- Right panel (Volume Info) populates:
-  - State: `INITIALIZED`
-  - RAID Level: `RAID0`
-  - Disks: `2`
-  - Capacity: shows combined capacity
-  - Mounted: `No`
-  - Cache: `ON (1024 MB)`
-  - UUID: 36-character hex string
+- Event Log: `[INFO] Mirror: OK — Volume is ready for mount`
+- Volume Info: State `INITIALIZED`, RAID Level `RAID1`, capacity = smallest disk
 
 **If failure:**
-- "Create: FAILED": disk selection problem (try Rescan)
+- Mirror button disabled — select at least 2 disks
 
 ---
 
-## Step 4: Mount Volume
+## Step 4: Mount
 
 **Action:** Click **Mount**
 
 **Expected screen:**
-- Status bar: yellow `[Mounting volume...]`
 - Event Log: `[OK] Mount: OK — Volume mounted at G:`
-- Volume Info updates:
-  - State: `MOUNTED`
-  - Mounted: `Yes` (green text)
-  - Uptime: `00:00:0X` (live counter)
-- **Mount** button becomes disabled; **Unmount** button enabled
+- Volume Info: State `MOUNTED` (green), Uptime counter starts
+- `G:\` appears in Windows Explorer
 
 **If failure:**
-- "Mount: FAILED": WinFsp not installed or another process holds G:
+- WinFsp not installed, or drive letter G: in use
 
 ---
 
-## Step 5: Explorer Verification
+## Step 5: Create Demo File
 
-**Action:** Open Windows File Explorer → navigate to `G:\`
+**Action:** In Explorer on `G:\`: New → Text Document → `RAIDV3_DEMO.txt`
+→ Type "RAIDV3 capstone demo successful!" → Save
 
 **Expected screen:**
-- `G:\` appears as a local disk in "This PC"
-- Volume label: `RAIDTEST`
-- Capacity shows the RAID0 combined size
-- You can create folders, copy files, edit documents
+- File appears on `G:\` with content preserved
+- Volume Info: Written counter increments
 
 ---
 
-## Step 6: Create Test File
+## Step 6: Simulate Disk Failure
 
-**Action:** In Explorer: right-click `G:\` → New → Text Document → name it `test.txt`
-→ Open it, type "RAIDTEST demo!", save, close
+**Action:** Switch to **Developer** tab → **Simulation Controls** → Enter disk `0` → **Simulate Fail**
 
 **Expected screen:**
-- File appears in `G:\` with content preserved
-- Volume Info panel: Written counter increments
+- Event Log: fault injection message
+- Volume Info: State changes to `DEGRADED` (yellow)
 
 ---
 
-## Step 7: Unmount
+## Step 7: Show DEGRADED State
 
-**Action:** Click **Unmount**
+**Action:** Switch to **Advanced** tab → Volume Info shows `DEGRADED`
 
-**Expected screen:**
-- Status bar: yellow `[Unmounting...]`
-- Event Log: `[OK] Unmount: OK — Volume unmounted`
-- Volume Info: State → `UNMOUNTED`, Mounted → `No`
-- `G:\` disappears from Explorer
-- **Mount** button becomes enabled; **Unmount** becomes disabled
-
-**If failure:**
-- "Unmount: FAILED": file handles open on G:\ (close all Explorer windows)
+**Narrate:** "System is in degraded mode. RAID1 still serves reads/writes from remaining healthy disks."
 
 ---
 
-## Step 8: Restore (Load from Saved Config)
+## Step 8: Rebuild
 
-**Action:**
-- Click **Scan** (to re-detect disks)
-- From the **Actions** menu (top-left), select **Restore**
-- In the dialog, choose **From Saved Config**
+**Action:** Click **Actions** → **Rebuild** → Enter failed disk index → **Start Rebuild**
 
 **Expected screen:**
-- Volume Info shows the same UUID and capacity as before
-- State: `UNMOUNTED` (ready to mount again)
-
-**What it demonstrates:** The volume configuration was saved to disk.
-Even after unmount, the UUID and disk mapping are preserved and restored.
+- Progress: `[Rebuilding...]`
+- Event Log: `[OK] Rebuild: OK — Rebuild complete`
+- Volume Info: State returns to `MOUNTED` (green)
 
 ---
 
-## Step 9: Re-mount & Verify
+## Step 9: Verify Recovered Data
 
-**Action:** Click **Mount**
-
-**Expected screen:**
-- Volume mounts at `G:` again
-- Open `G:\test.txt` in Explorer — the file content is preserved from Step 6
-
----
-
-## Step 10: Destroy (Cleanup)
-
-**Action:** Click **Destroy**
+**Action:** Open `G:\RAIDV3_DEMO.txt`
 
 **Expected screen:**
-- **Confirmation Dialog** appears (centered modal):
-  - "Are you sure you want to DESTROY the volume?"
-  - [Yes, Destroy] [Cancel]
-
-**Action:** Click **Yes, Destroy**
-
-**Expected screen:**
-- Status bar: yellow `[Destroying volume...]`
-- Event Log: `[INFO] Destroy: OK — Volume destroyed`
-- Volume Info resets: "No volume — Scan + Create first"
-- Pool files deleted from disk
+- File content: "RAIDV3 capstone demo successful!"
+- **Data survived failure + rebuild intact.**
 
 ---
 
 ## Quick Reference
 
 ```
- Step         | Button / Action        | Key Indicator
---------------+------------------------+-----------------------------
- 1. Launch    | Double-click exe       | Dark GUI, empty tables
- 2. Scan      | [Scan]                 | Disks appear in list
- 3. Create    | [Create]               | Volume Info populated
- 4. Mount     | [Mount]                | G:\ appears in Explorer
- 5. Explorer  | Navigate to G:\        | Files work normally
- 6. File      | Create test.txt        | Write counter increases
- 7. Unmount   | [Unmount]              | G:\ disappears
- 8. Restore   | Actions → Restore      | Same UUID restored
- 9. Re-mount  | [Mount]                | File content preserved
- 10. Destroy  | [Destroy] → Confirm    | Volume Info clears
+ Step         | Button / Action              | Key Indicator
+--------------+------------------------------+-----------------------------
+ 1. Launch    | Double-click exe             | Dark GUI, empty tables
+ 2. Scan      | [Scan]                       | Disks appear in list
+ 3. Create    | [Mirror]                     | Volume Info: RAID1
+ 4. Mount     | [Mount]                      | G:\ appears in Explorer
+ 5. File      | Create RAIDV3_DEMO.txt       | Write counter increases
+ 6. Failure   | Developer → Simulate Fail    | State → DEGRADED
+ 7. Degraded  | Advanced tab                | Yellow DEGRADED badge
+ 8. Rebuild   | Actions → Rebuild            | State → MOUNTED
+ 9. Verify    | Open file on G:\             | Content preserved
 ```
-
-## Beginner Mode Alternative
-
-Switch to **Beginner** mode (top tabs) for simplified one-click operations:
-1. **Quick Setup** — scan + create + cache + mount all-in-one
-2. **Restore Volume** — restore from saved config
-3. **Unmount / Benchmark** — available when volume is mounted
 
 ## CLI Alternative
 
 All steps work via CLI:
 ```
-raidtest.exe --cli
+raidtest_winfsp.exe --cli
 scan
 init 0:1024 1:1024
-create
+mirror
 mount G
-unmount
-destroy
+simulate 0 fail
+rebuild 0 0
+type G:\RAIDV3_DEMO.txt
 ```
+
+## Beginner Mode Alternative
+
+Switch to **Beginner** tab for simplified one-click operations:
+1. **Quick Setup** — scan + create + cache + mount all-in-one
+2. **Unmount / Benchmark** — when volume is mounted

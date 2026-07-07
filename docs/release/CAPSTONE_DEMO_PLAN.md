@@ -68,59 +68,58 @@
 
 ---
 
-## SEGMENT 6: Unmount (30 sec)
+## SEGMENT 6: Simulate Disk Failure (30 sec)
 
 | Aspect | Detail |
 |--------|--------|
-| **Action** | Click **[Unmount]** |
-| **Expected Screen** | Progress: `[Unmounting volume...]` → Event Log: `[OK] Unmount: OK - Volume unmounted` → Volume Info: State → `UNMOUNTED`, Mounted → `No` → `G:\` disappears from Explorer |
-| **Source Flow** | `gui.cpp:1040-1042` → `W_UNMOUNT` → `worker_thread:294-305` → `raid_unmount()` → cache flush → journal commit → FUSE unmount |
-| **Talking Point** | "Unmount flushes all dirty cache blocks, commits the journal, then unregisters the FUSE filesystem. Pool files and metadata remain on disk." |
+| **Action** | Switch to **[Developer]** tab → **Simulation Controls** panel → Enter disk index `0` → Click **[Simulate Fail]** |
+| **Expected Screen** | Event Log: fault injection message. Volume Info: State → `DEGRADED` (yellow) |
+| **Source Flow** | `gui.cpp` (W_SIMULATE_FAIL) → `worker_thread` → `raid_service.simulate_fail()` → `storage_common.c:3-13` → `InterlockedExchange(&disk->faulty, 1)` |
+| **Talking Point** | "We inject a fault on disk 0. The system detects I/O errors, increments the error counter, and marks the disk as faulty. RAID1 enters degraded mode but continues serving data from the remaining healthy mirror member." |
 
 ---
 
-## SEGMENT 7: Restore from Saved Config (30 sec)
+## SEGMENT 7: Show DEGRADED State (30 sec)
 
 | Aspect | Detail |
 |--------|--------|
-| **Action** | Click **[Scan]** → Menu: **[Actions]** → **[Restore]** → Dialog: **[From Saved Config]** |
-| **Expected Screen** | Progress: `[Restoring from config...]` → Event Log: `[OK] Restore from config: OK` → Volume Info shows same UUID and capacity as before |
-| **Source Flow** | `gui.cpp:1578` → `ShowRestoreWizard()` → `W_LOAD_CONFIG` → `worker_thread:502-531` → `config_load()` → `raid_init_pools()` → `raid_create()` |
-| **Talking Point** | "The volume configuration was saved to %USERPROFILE%\\.config\\RAIDTEST\\config.json earlier. Restore reads this JSON, recreates pool files, and reapplies the superblock. This proves persistence." |
+| **Action** | Switch to **[Advanced]** tab → Observe Volume Info panel shows `DEGRADED` (yellow badge) |
+| **Expected Screen** | State: `DEGRADED` (yellow). System still at `G:\` — files are readable and writable. |
+| **Source Flow** | `gui.cpp:1165-1222` (Volume Info render) → reads `vol->state` → displays `RAID_STATE_DEGRADED` → `mirror_engine.c:33-76` (degraded read skips faulty disk) |
+| **Talking Point** | "DEGRADED means one mirror member has failed, but the volume remains fully accessible. Every read is served from the healthy disk, every write is written to all remaining healthy disks. No data is lost." |
+| **(Optional)** | Open `G:\RAIDV3_DEMO.txt` to verify read still works. Create a new file to verify write still works. |
 
 ---
 
-## SEGMENT 8: CLI Alternative (30 sec)
+## SEGMENT 8: Rebuild (1 min)
 
 | Aspect | Detail |
 |--------|--------|
-| **Action** | Switch to terminal → Run: `raidtest_winfsp.exe --cli` |
-| **Expected Screen** | Banner: "RAIDTEST v1.0 RC4 - Asymmetric Stripe Engine" followed by auto-restore or quick setup |
-| **Commands to Show** | Type `help` → full command list. Type `status` → live dashboard. Type `info` → volume details. Type `map` → LBA mapping table. |
-| **Source Flow** | `main.c:38-43` → `cli_main()` → `cmd_process()` dispatch table → `raid_*()` |
-| **Talking Point** | "All GUI functionality is available in CLI mode. 31 commands. Good for scripting and automation." |
+| **Action** | Click **[Actions]** → **[Rebuild]** → Rebuild wizard appears → Select replacement disk → Click **[Start Rebuild]** |
+| **Expected Screen** | Progress: `[Rebuilding...]` indeterminate bar → Event Log: `[OK] Rebuild: OK — Rebuild complete` → Volume Info: State → `MOUNTED` (green) |
+| **Source Flow** | `gui.cpp:1471-1504` (ShowRebuildWizard) → `W_REBUILD` → `worker_thread` → `raid_rebuild()` → `mirror_engine.c:126-180` (64MB chunk copy + FlushFileBuffers) |
+| **Talking Point** | "Rebuild copies data from the healthy disk to the replacement disk in 64 MB chunks. After each chunk, FlushFileBuffers ensures data is persisted. Once complete, the volume returns to MOUNTED state with full redundancy restored." |
 
 ---
 
-## SEGMENT 9: Destroy (30 sec)
+## SEGMENT 9: Verify Recovered Data (30 sec)
+
+| Aspect | Detail |
+|--------|--------|
+| **Action** | Open Windows Explorer → `G:\RAIDV3_DEMO.txt` |
+| **Expected Screen** | File content: `"RAIDV3 capstone demo successful!"` — identical to the content written before the failure |
+| **Talking Point** | "The file we created before the failure is intact. Data survived the simulated disk failure and the rebuild process. This is the core value of RAID1: fault tolerance with zero data loss." |
+
+---
+
+## SEGMENT 10: Destroy (Cleanup, 30 sec)
 
 | Aspect | Detail |
 |--------|--------|
 | **Action** | Click **[Destroy]** → Confirmation dialog: **[Yes, Destroy]** |
-| **Expected Screen** | Modal: "Are you sure you want to DESTROY the volume?" with yellow warning → Progress: `[Destroying volume...]` → Event Log: `[INFO] Destroy: OK - Volume destroyed` → Volume Info resets to "No volume - Scan + Create first" |
+| **Expected Screen** | Modal: "Are you sure you want to DESTROY the volume?" → Progress: `[Destroying volume...]` → Event Log: `[INFO] Destroy: OK - Volume destroyed` → Volume Info resets to "No volume - Scan + Create first" |
 | **Source Flow** | `gui.cpp:1044-1046` → `ShowConfirmDestroy()` at `gui.cpp:1327-1348` → `W_DESTROY` → `worker_thread:306-317` → `raid_destroy()` → unmount + delete pool files + wipe superblock |
-| **Talking Point** | "Destroy requires explicit confirmation to prevent accidental data loss. Once confirmed, it unmounts, deletes pool files, and clears metadata." |
-
----
-
-## SEGMENT 10: Bonus — Developer Mode (30 sec, if time permits)
-
-| Aspect | Detail |
-|--------|--------|
-| **Action** | Switch to **[Developer]** tab → CLI: `map`, `metadata C:`, `events` |
-| **Expected Screen** | Performance Dashboard with live R/W throughput, IOPS, latency plots. CLI commands show raw internals. |
-| **Source Flow** | `gui.cpp:988-1001` (mode switch) → `ShowPerformanceDashboard()` (`gui.cpp:860-910`) → CLI commands |
-| **Talking Point** | "Developer mode exposes everything: LBA mapping table, raw superblock fields, event log. Used for debugging and verification." |
+| **Talking Point** | "Destroy requires explicit confirmation to prevent accidental data loss. Once confirmed, it unmounts the volume, deletes pool files, and clears all metadata from disk." |
 
 ---
 
@@ -129,18 +128,18 @@
 ```
  0:00 ─ Launch GUI                                          (Segment 1)
  0:30 ─ Scan Disks                                          (Segment 2)
-  1:00 ─ Create RAID1/Mirror Volume                           (Segment 3)
+ 1:00 ─ Create RAID1/Mirror Volume                           (Segment 3)
  2:00 ─ Mount + Explorer Verify                              (Segment 4)
  3:00 ─ Create File on RAID Volume                           (Segment 5)
- 3:30 ─ Unmount                                             (Segment 6)
- 4:00 ─ Restore from Saved Config                            (Segment 7)
- 4:30 ─ CLI Alternative                                      (Segment 8)
- 5:00 ─ Destroy                                             (Segment 9)
- 5:30 ─ Developer Mode (bonus)                               (Segment 10)
- 6:00 ─ Q&A                                                  (remaining time)
+ 3:30 ─ Simulate Disk Failure                                (Segment 6)
+ 4:00 ─ Show DEGRADED State                                  (Segment 7)
+ 4:30 ─ Rebuild                                              (Segment 8)
+ 5:30 ─ Verify Recovered Data                                (Segment 9)
+ 6:00 ─ Destroy (Cleanup)                                    (Segment 10)
+ 6:30 ─ Q&A                                                  (remaining time)
 ```
 
-**Total: 5–6 minutes core demo + 4 minutes Q&A buffer = 10 minutes.**
+**Total: 6–7 minutes core demo + 3–4 minutes Q&A buffer = 10 minutes.**
 
 ---
 
@@ -148,11 +147,13 @@
 
 | Failure Scenario | Workaround |
 |-----------------|------------|
-| No physical disks | Use pool files on existing NTFS drive. `init 0:1024 1:1024` creates file-backed pools. |
+| No physical disks | Use pool files on existing NTFS drive. CLI: `init 0:1024 1:1024` → `mirror` |
 | WinFsp not installed | Show welcome dialog detection. All CLI workflows work without mount. Demonstrate CLI + test commands. |
-| GUI fails to launch (no D3D11) | Use `--cli` mode for full demo. Run `quick` command. |
+| GUI fails to launch (no D3D11) | Use `--cli` mode. Full flow: `scan` → `init 0:1024 1:1024` → `mirror` → `mount G` → `simulate 0 fail` → `rebuild 0 0` |
 | Only 1 disk available | Show planner panel. Explain RAID1 requires 2+. Demonstrate with simulated pool files. |
-| Mount fails (letter conflict) | Change mount letter in Settings or use different letter. |
+| Mount fails (letter conflict) | Change mount letter in Settings or use `mount H` in CLI. |
+| Simulate Fail not visible | Use CLI: `simulate 0 fail` from any mode. Verify with `status`. |
+| Rebuild has no replacement disk | Create pool file first: CLI `init 0:1024` → then `rebuild 0 0` |
 
 ---
 
@@ -165,7 +166,8 @@
 | `src/cmd_handler.c` | CLI dispatch (31 commands) |
 | `src/raid_service.c/.h` | Unified backend API (30 functions) |
 | `src/stripe_engine.c/.h` | Asymmetric RAID0 LBA mapping |
-| `src/mirror_engine.c/.h` | RAID1 mirror write/read/rebuild |
+| `src/mirror_engine.c/.h` | RAID1 mirror write/read/rebuild (fault tolerance core) |
+| `src/storage_common.c/.h` | Fault detection, error counting, OVERLAPPED I/O |
 | `src/ram_cache.c/.h` | Write-back cache (64KB blocks, async flush) |
 | `src/journal.c/.h` | Write-ahead log (crash recovery) |
 | `src/fuse_bridge.c/.h` | WinFsp FUSE filesystem callbacks |
