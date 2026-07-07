@@ -183,7 +183,7 @@ The `USER_FLOW.md` (line 329-331) and `PRODUCT_DESIGN.md` (line 273) describe an
 |------|----------------|-----------------|--------------|
 | 1. Launch | Double-click `raidtest.exe` | `main.c:131` → `gui_run()` → SetupWindow + D3D11 + ImGui init | ✅ YES |
 | 2. Scan | Click [Scan] | `gui.cpp:1017` → `W_SCAN` → `raid_scan()` | ✅ YES |
-| 3. Create RAID0 | Select disks + [Create] | `gui.cpp:1019-1027` → `W_CREATE` → `raid_init_pools()` + `raid_create()` | ✅ YES |
+| 3. Create RAID1 | Select disks + [Mirror] | `gui.cpp:1029-1031` → `W_MIRROR` → `raid_init_pools()` + `raid_mirror()` | ✅ YES |
 | 4. Mount | [Mount] | `gui.cpp:1033-1038` → `W_MOUNT` → `raid_mount('G')` | ✅ YES (requires WinFsp) |
 | 5. Explorer Verify | Open `G:\` in Explorer | WinFsp FUSE layer serves filesystem | ✅ YES (requires WinFsp) |
 | 6. Create Test File | Create `test.txt` on `G:\` | FUSE write path → stripe/mirror engine → cache → journal → disk | ✅ YES |

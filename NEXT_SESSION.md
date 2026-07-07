@@ -44,6 +44,34 @@ OK — Release build passes (same pre-existing warnings). No new warnings from f
 - V8: Re-verified build and tests: `build.bat` OK, `raidtest_tests.exe` 39/39, stress all PASS.
 - Updated: `OPENCODE_PROGRESS.md`, `OPENCODE_TEST_LOG.md`, `NEXT_SESSION.md`.
 
+## Last Session Completed (Capstone Presentation Prep — 2026-07-07)
+- **Phase 1 — Presentation Package**: Created `docs/release/PRESENTATION_SCRIPT.md` with 10-section capstone script (intro, background, Windows RAID rationale, 7-layer architecture, asymmetric stripe algorithm, cache/journal/recovery, WinFsp FUSE, demo flow, test results, limitations).
+- **Phase 2 — Professor Q&A Enhancement**: Added 9 new Q&A items (Q9-Q17) to existing `PROFESSOR_QA.md`: RAID5 comparison, Storage Spaces contrast, innovation highlights, data consistency, crash recovery flow, multi-disk failure scenarios, thread safety, WinFsp vs kernel driver, C/C++ rationale. Total: 17 prepared questions.
+- **Phase 3 — Demo Dry Run Checklist**: Created `docs/release/DEMO_RUN_CHECKLIST.md` with pre-demo prep (environment, build, test, data cleanup) and step-by-step demo flow (9 steps with success criteria, failure fallbacks, CLI alternatives).
+- **Phase 4 — Final Repository Check**: `build.bat` PASS (pre-existing warnings), `raidtest_tests.exe` 39/39 PASS, `DOCUMENT_INDEX.md` updated to reflect all 10 docs/release/ files.
+- Updated: `DOCUMENT_INDEX.md`, `OPENCODE_PROGRESS.md`, `OPENCODE_TEST_LOG.md`, `NEXT_SESSION.md`.
+
+## Last Session Completed (Final Demo Rehearsal — 2026-07-07)
+- **Phase 1 — Environment Verification**: Confirmed GUI entry (`main.c:131` → `gui_run()`), D3D11 fallback, CLI `--cli`/`--help`/`--version`. WinFsp FOUND. All binaries present.
+- **Phase 2 — Demo Path Trace**: Verified all 9 demo steps (Startup, Scan, Create, Mount, Write, Failure, Degraded, Rebuild, Verify) against source code. Every step traceable and functional.
+- **Phase 3 — Risk Assessment**: Built risk table. B1/B2/B3 (P0) LOW demo probability. B9 (P1) MEDIUM. Admin missing MEDIUM. All risks have mitigations.
+- **Phase 4 — Timing Plan**: 5-min (core), 10-min (full), 15-min (architecture + Q&A) versions created.
+- **Phase 5 — Professor Q&A**: 17 questions prepared in PROFESSOR_QA.md with verified source evidence.
+- **Phase 6 — Build & Test**: `build.bat` OK (pre-existing warnings), `raidtest_tests.exe` 39/39 PASS, `test_concurrent.exe` PASS, `test_metadata_corrupt.exe` PASS, `test_random_io.exe` PASS.
+- Created `docs/release/FINAL_DEMO_REHEARSAL.md` with comprehensive findings.
+- **Final Verdict: RAIDTEST v1.0 RC4 is DEMO-READY.** Critical failure probability: VERY LOW. 3-tier emergency fallback plan documented.
+- Updated: `OPENCODE_PROGRESS.md`, `OPENCODE_TEST_LOG.md`, `NEXT_SESSION.md`.
+
+## Last Session Completed (Capstone Demo Rehearsal Audit — 2026-07-07)
+- **Phase 1 — Environment Audit**: Verified build.bat, WinFsp (installed), D3D11 (available), Administrator (NOT elevated). Created DEMO_ENVIRONMENT_REPORT.md.
+- **Phase 2 — Demo Flow Simulation**: Traced 9 demo steps against source. Every step has GUI + CLI + backend. Created DEMO_FLOW_AUDIT.md.
+- **Phase 3 — Presentation Risk Review**: Found **CRITICAL issue**: PRESENTATION_SCRIPT.md describes failure+rebuild but demo uses RAID0. Must resolve before presenting. Created PRESENTATION_RISK_REPORT.md.
+- **Phase 4 — Professor Q&A**: Added 9 new tough questions (Q18-Q27). PROFESSOR_QA.md now 27 questions.
+- **Phase 5 — Build & Test**: `build.bat` OK (pre-existing warnings), `raidtest_tests.exe` 39/39, stress all PASS.
+- Created `docs/release/CAPSTONE_FINAL_STATUS.md`.
+- **Final Verdict: RAIDTEST v1.0 RC4 is READY WITH LIMITATIONS.** One critical script contradiction to fix.
+- Updated: `OPENCODE_PROGRESS.md`, `OPENCODE_TEST_LOG.md`, `NEXT_SESSION.md`.
+
 ## Last Session Completed (Final Release Cleanup — 2026-07-07)
 - **Phase 1 — Documentation Sync**: Fixed DOCUMENT_INDEX.md (release 2→7 files, development 3→6 files, added dual-archive note). Fixed REPOSITORY_STRUCTURE.md (NEXT_SESSION.md path, file counts, Build Artifacts status).
 - **Phase 2 — Version Normalization**: Unified version naming to "RAIDTEST v1.0 RC4 (codename: RAIDV3)" across 6 engineering control files.
@@ -60,8 +88,36 @@ OK — Release build passes (same pre-existing warnings). No new warnings from f
 - **Task 4**: Created `docs/release/ARCHITECTURE_PRESENTATION.md` with architecture diagram description, innovation explanation (asymmetric stripe), demo walkthrough, and limitation list.
 - Updated: `OPENCODE_PROGRESS.md`, `OPENCODE_TEST_LOG.md`, `NEXT_SESSION.md`.
 
-## Next Recommended Action
-Final release cleanup complete. Project is READY for capstone submission.
+## Current Status
+**All documentation and operator training complete.** Repository is packaged for capstone demo.
+
+## Final Demo Operator Training (2026-07-08)
+- Created `FINAL_DEMO_OPERATOR_GUIDE.md` — 6-section operator manual
+- Created `DEMO_DOCUMENT_MAP.md` — A/B/C/D/E doc classification
+- Created `DEMO_PACKAGE_STRUCTURE.md` — Recommended repo layout
+- Created `FINAL_DEMO_OPERATOR_TRAINING_REPORT.md` — Session report
+- Moved 9 prep/rehearsal docs from `docs/release/` to `docs/archive/`
+- Updated `DOCUMENT_INDEX.md`, `REPOSITORY_STRUCTURE.md`
+- Build OK, 39/39 PASS, no source changes
+- **Verdict: READY FOR DEMO**
+
+## Demo Day Pre-Flight Checklist
+1. [x] **FIX** RAID0/RAID1 contradiction — **DONE**
+2. [x] **Operator training manual created** — **DONE**
+3. [x] **Document map created** — **DONE**
+4. [x] **Prep docs archived** — **DONE**
+5. [x] **Build PASS** — **DONE**
+6. [x] **39/39 tests PASS** — **DONE**
+7. [ ] Verify Administrator access on demo machine
+8. [ ] Confirm WinFsp installed
+9. [ ] Run `build.bat` fresh before demo
+10. [ ] Run `raidtest_tests.exe` to confirm 39/39
+11. [ ] Review `docs/release/DEMO_RUN_CHECKLIST.md` pre-demo prep
+12. [ ] Rehearse 5-min version at least 3 times
+13. [ ] Print `docs/release/PRESENTATION_SCRIPT.md` for reference
+14. [ ] Review `docs/release/PROFESSOR_QA.md` 27 Q&A items
+15. [ ] Prepare pool file fallback command: `init 0:1024 1:1024`
+16. [ ] Have `--cli` fallback ready in case GUI fails
 
 Remaining engineering work (post-demo):
 
@@ -81,7 +137,9 @@ After each fix: rebuild, run tests 39/39, verify no regression.
 | Bug verification | `docs/development/BUG_VERIFICATION.md` |
 | Development docs | `docs/development/` |
 | Learning guide | `docs/learning/LEARNING_GUIDE.md` |
-| Release docs | `docs/release/` |
+| Operator manual | `docs/release/FINAL_DEMO_OPERATOR_GUIDE.md` |
+| Demo documents | `docs/release/` |
+| Archived prep docs | `docs/archive/` |
 | Repository layout | `REPOSITORY_STRUCTURE.md` (root) |
 | Agent rules | `AGENT.md` (root) |
 
@@ -91,3 +149,4 @@ After each fix: rebuild, run tests 39/39, verify no regression.
 - (2026-07-07) Repository Organization: Created REPOSITORY_STRUCTURE.md; reorganized root/docs; cleaned build artifacts; updated AGENT.md, DOCUMENT_INDEX.md. No source changes.
 - (2026-07-07) Bug Investigation: Traced B10-B14 source/impact/reproduction; produced BUG_INVESTIGATION_RESULT.md; updated MASTER_BACKLOG.md, OPENCODE_PROGRESS.md, OPENCODE_TEST_LOG.md, NEXT_SESSION.md. No source changes.
 - (2026-07-07) Bug Fixes: Fixed B10 (pool_mb config), B11 (cleanup scope), B12 (atomic mirror stats). Build OK, 39/39 tests pass. Produced BUG_FIX_RESULT.md. Source changes: common.h (+1 field), config.c (+3 lines), gui.cpp (1 change), cleanup.c (-40 lines), mirror_engine.c (1 change).
+- (2026-07-08) Final Demo Operator Training: Created FINAL_DEMO_OPERATOR_GUIDE.md, DEMO_DOCUMENT_MAP.md, DEMO_PACKAGE_STRUCTURE.md, FINAL_DEMO_OPERATOR_TRAINING_REPORT.md. Moved 9 prep docs to docs/archive/. Updated indexes. Build OK, 39/39 PASS. No source changes. Verdict: READY FOR DEMO.

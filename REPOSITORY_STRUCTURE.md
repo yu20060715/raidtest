@@ -141,14 +141,19 @@ docs/
 ├── learning/                   # Tutorials & learning
 │   └── LEARNING_GUIDE.md       #   System internals tutorial
 │
-├── release/                    # Release artifacts
-│   ├── ARCHITECTURE_PRESENTATION.md  # Architecture diagram and demo
+├── release/                    # Demo package (operator-facing)
+│   ├── FINAL_DEMO_OPERATOR_GUIDE.md    # Complete operator manual
+│   ├── DEMO_DOCUMENT_MAP.md           # Document classification (A/B/C/D/E)
+│   ├── DEMO_PACKAGE_STRUCTURE.md      # Recommended repo layout
+│   ├── FINAL_DEMO_OPERATOR_TRAINING_REPORT.md # Session report
+│   ├── ARCHITECTURE_PRESENTATION.md   # Architecture diagram and demo
 │   ├── BUILD_STATUS.md         #   Build/test validation
 │   ├── CAPSTONE_DEMO_PLAN.md   #   10-segment demo script
+│   ├── DEMO_RUN_CHECKLIST.md   #   Pre-demo + live checklist
 │   ├── FEATURE_MATRIX.md       #   66-feature classification
-│   ├── PROFESSOR_QA.md         #   Prepared Q&A for review
-│   ├── RELEASE_CHECKLIST.md    #   Release verification steps
-│   └── RELEASE_VERIFICATION.md #   RC4 release verification
+│   ├── PRESENTATION_SCRIPT.md  #   10-section spoken script
+│   ├── PROFESSOR_QA.md         #   27 prepared Q&A with evidence
+│   └── RELEASE_CHECKLIST.md    #   Release verification steps
 │
 ├── research/                   # (reserved for future research notes)
 │
@@ -167,17 +172,26 @@ docs/
     ├── WORKFLOW.md
     ├── benchmark/
     │   └── cli_bench.c
-    └── validation/
-        ├── BUG_STATUS.md
-        ├── DEMO_DATASET.md
-        ├── HARDWARE_VALIDATION.md
-        ├── PERFORMANCE_REPORT_TEMPLATE.md
-        ├── PERFORMANCE.md
-        ├── QA_REPORT.md
-        ├── REAL_TEST.md
-        ├── REGRESSION_REPORT.md
-        ├── VALIDATION_MATRIX.md
-        └── WINAPI_AUDIT.md
+    ├── validation/
+    │   ├── BUG_STATUS.md
+    │   ├── DEMO_DATASET.md
+    │   ├── HARDWARE_VALIDATION.md
+    │   ├── PERFORMANCE_REPORT_TEMPLATE.md
+    │   ├── PERFORMANCE.md
+    │   ├── QA_REPORT.md
+    │   ├── REAL_TEST.md
+    │   ├── REGRESSION_REPORT.md
+    │   ├── VALIDATION_MATRIX.md
+    │   └── WINAPI_AUDIT.md
+    ├── FINAL_DEMO_REHEARSAL.md
+    ├── DEMO_ENVIRONMENT_REPORT.md
+    ├── DEMO_FLOW_AUDIT.md
+    ├── PRESENTATION_RISK_REPORT.md
+    ├── CAPSTONE_FINAL_STATUS.md
+    ├── DEMO_SCENARIO_CORRECTION.md
+    ├── DEMO_SCENARIO_CORRECTION_REPORT.md
+    ├── FINAL_CLEANUP_REPORT.md
+    └── RELEASE_VERIFICATION.md
 ```
 
 ---

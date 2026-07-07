@@ -113,10 +113,11 @@ GUI starts in Beginner mode. Welcome wizard offers Quick Setup or Explore.
 Click [Scan]. IOCTL-based disk enumeration detects physical drives,
 runs sequential benchmark (read/write MB/s), populates disk table.
 
-### Segment 3: Create RAID0 (1 min)
-Check 2+ disks, click [Create]. Pool files (`stripe_pool.dat`) are
-created on each disk. Superblock v4 metadata is written (UUID, generation,
-CRC32). Volume object constructed in memory.
+### Segment 3: Create RAID1 Mirror (1 min)
+Check 2+ disks, click [Mirror]. Pool files (`stripe_pool.dat`) are
+created on each disk. Mirror engine configures write-to-all mode.
+Superblock v4 metadata is written (UUID, generation, CRC32, RAID level=1).
+Volume object constructed in memory.
 
 ### Segment 4: Mount (1 min)
 Click [Mount]. WinFsp FUSE filesystem registered as `G:\`. Write-back
@@ -124,7 +125,7 @@ cache initialized (64 KB blocks, async flush thread). Journal replays
 any uncommitted WAL entries from previous crashes.
 
 ### Segment 5: File I/O (30s)
-Create/save a file on `G:\`. Data path: FUSE → stripe engine (LBA mapping)
+Create/save a file on `G:\`. Data path: FUSE → mirror engine (write-to-all)
 → cache (dirty/valid bitmaps) → journal (WAL entry) → async OVERLAPPED I/O.
 
 ### Segment 6: Unmount (30s)

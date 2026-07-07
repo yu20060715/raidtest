@@ -75,17 +75,22 @@
 
 ---
 
-## `docs/release/` — Release Artifacts
+## `docs/release/` — Release Artifacts (Demo Package)
 
 | File | Purpose | Status |
 |------|---------|--------|
+| `FINAL_DEMO_OPERATOR_GUIDE.md` | Complete operator training manual (6 sections) | ACTIVE |
+| `DEMO_DOCUMENT_MAP.md` | Document classification: A/B/C/D/E for demo day | ACTIVE |
+| `DEMO_PACKAGE_STRUCTURE.md` | Recommended final repository structure | ACTIVE |
+| `FINAL_DEMO_OPERATOR_TRAINING_REPORT.md` | Operator training session report | ACTIVE |
 | `ARCHITECTURE_PRESENTATION.md` | Architecture diagram and innovation explanation | ACTIVE |
 | `BUILD_STATUS.md` | Capstone final build and test validation | ACTIVE |
 | `CAPSTONE_DEMO_PLAN.md` | 10-segment demo script for professor review | ACTIVE |
+| `DEMO_RUN_CHECKLIST.md` | Pre-demo prep and live demo checklist | ACTIVE |
 | `FEATURE_MATRIX.md` | 66-feature classification with GUI/CLI entries | ACTIVE |
-| `PROFESSOR_QA.md` | Prepared Q&A with source evidence | ACTIVE |
+| `PRESENTATION_SCRIPT.md` | Capstone presentation script (10 sections) | ACTIVE |
+| `PROFESSOR_QA.md` | Prepared Q&A with source evidence (27 Q&A) | ACTIVE |
 | `RELEASE_CHECKLIST.md` | Pre-release verification steps | ACTIVE |
-| `RELEASE_VERIFICATION.md` | RC4 release verification report | REFERENCE |
 
 ---
 
@@ -96,6 +101,8 @@
 ---
 
 ## `docs/archive/` — Historical / Superseded
+
+### Sprint Reports & Architecture (original)
 
 | File | Purpose | Status |
 |------|---------|--------|
@@ -111,6 +118,20 @@
 | `summary.md` | Sprint 5 completion summary | ARCHIVED |
 | `VALIDATION.md` | Feature validation matrix | ARCHIVED |
 | `WORKFLOW.md` | CLI command sequence guide | ARCHIVED |
+
+### Demo Preparation & Rehearsal Docs (moved from `docs/release/`)
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `FINAL_DEMO_REHEARSAL.md` | Final demo rehearsal report | ARCHIVED |
+| `DEMO_ENVIRONMENT_REPORT.md` | Environment audit for demo | ARCHIVED |
+| `DEMO_FLOW_AUDIT.md` | 9-step demo flow trace | ARCHIVED |
+| `PRESENTATION_RISK_REPORT.md` | Risk review (found RAID0/1 contradiction) | ARCHIVED |
+| `CAPSTONE_FINAL_STATUS.md` | Final status after rehearsal audit | ARCHIVED |
+| `DEMO_SCENARIO_CORRECTION.md` | RAID0→RAID1 scenario correction | ARCHIVED |
+| `DEMO_SCENARIO_CORRECTION_REPORT.md` | Correction session report | ARCHIVED |
+| `FINAL_CLEANUP_REPORT.md` | Final release cleanup report | ARCHIVED |
+| `RELEASE_VERIFICATION.md` | RC4 release verification report | ARCHIVED |
 
 ### `docs/archive/validation/`
 
@@ -141,11 +162,12 @@
 session summaries, and implementation reports that are superseded by
 `MASTER_BACKLOG.md`, `BUG_VERIFICATION.md`, or are no longer relevant.
 
-**Note on dual archive locations**: Two archive directories exist — `ARCHIVE/`
-in root and `docs/archive/`. This is because some documents were moved from
-root to `ARCHIVE/` during an earlier cleanup pass, while others were placed
-in `docs/archive/` during a later reorganization. Both contain superseded
-material. Consolidation is deferred to avoid breaking existing references.
+**Note on archive locations**: Three archive sources exist:
+- `ARCHIVE/` (root) — 34 historical documents moved from root during cleanup
+- `docs/archive/` — Sprint reports, old roadmaps, and validation docs
+- `docs/archive/` (demo prep subsection) — Rehearsal/prep docs moved from `docs/release/` during operator training
+
+All contain superseded material. Consolidation is deferred to avoid breaking existing references.
 
 Key files:
 - `AUDIT_REPORT.md` — 60-file audit (superseded by BUG_VERIFICATION.md)

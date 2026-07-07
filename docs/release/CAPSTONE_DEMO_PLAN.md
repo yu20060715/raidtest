@@ -31,16 +31,16 @@
 
 ---
 
-## SEGMENT 3: Create RAID0 Volume (1 min)
+## SEGMENT 3: Create RAID1/Mirror Volume (1 min)
 
 | Aspect | Detail |
 |--------|--------|
-| **Action** | Check 2 disks in the "Use" column → Click **[Create]** |
-| **Expected Screen** | Progress: `[Creating volume...]` → Event Log: `[INFO] Create: OK — Volume is ready for mount` → Volume Info panel populates |
-| **Volume Info Shows** | State: `INITIALIZED`, RAID Level: `RAID0`, Disks: `2`, Capacity: combined GB, Mounted: `No`, Cache: `ON (1024 MB)`, UUID, Generation |
-| **Source Flow** | `gui.cpp:1019-1027` → `W_CREATE` → `worker_thread:250-269` → `raid_init_pools()` (creates `stripe_pool.dat` on each disk) + `raid_create()` (writes superblock v4) |
-| **Key Files** | `src/stripe_engine.c` (asymmetric LBA mapping), `src/superblock.c` (v4 format: magic 0x52444953, UUID, generation, CRC32), `src/volume_manager.c` (orchestration) |
-| **Talking Point** | "Create does two things: 1) Creates pool files on each selected disk — these are the backing storage for the virtual volume. 2) Writes a superblock — our on-disk metadata format — containing UUID, generation counter, and CRC32 checksum for integrity." |
+| **Action** | Check 2 disks in the "Use" column → Click **[Mirror]** |
+| **Expected Screen** | Progress: `[Creating volume...]` → Event Log: `[INFO] Mirror: OK — Volume is ready for mount` → Volume Info panel populates |
+| **Volume Info Shows** | State: `INITIALIZED`, RAID Level: `RAID1`, Disks: `2`, Capacity: smallest disk GB, Mounted: `No`, Cache: `ON (1024 MB)`, UUID, Generation |
+| **Source Flow** | `gui.cpp:1029-1031` → `W_MIRROR` → `worker_thread:270-280` → `raid_init_pools()` (creates `stripe_pool.dat` on each disk) + `raid_mirror()` (writes superblock v4 with RAID1 type) |
+| **Key Files** | `src/mirror_engine.c` (write-to-all, degraded read, rebuild), `src/superblock.c` (v4 format: magic 0x52444953, UUID, generation, CRC32), `src/volume_manager.c` (orchestration) |
+| **Talking Point** | "Mirror creates a RAID1 volume. Data written to one disk is duplicated to all other disks in the array. This provides fault tolerance — if any disk fails, the system continues operating from the remaining mirror members." |
 
 ---
 
@@ -50,7 +50,7 @@
 |--------|--------|
 | **Action** | Click **[Mount]** → Open Windows Explorer → Navigate to `G:\` |
 | **Expected Screen** | Progress: `[Mounting volume...]` → Event Log: `[OK] Mount: OK - Volume mounted at G:` → Volume Info: State → `MOUNTED`, Mounted → `Yes` (green), Uptime counter starts |
-| **Explorer Shows** | `G:\` appears as a local disk in "This PC", volume label "RAIDTEST", capacity matches RAID0 combined size |
+| **Explorer Shows** | `G:\` appears as a local disk in "This PC", volume label "RAIDTEST", capacity matches smallest disk size (mirror) |
 | **Source Flow** | `gui.cpp:1033-1038` → `W_MOUNT` → `worker_thread:282-292` → `raid_mount('G')` → `volume_mount()` → `fuse_mount()` (WinFsp FUSE_FSCTL) → `ram_cache_init()` (starts flush thread) → `journal_recover()` (replays WAL) |
 | **Key Files** | `src/fuse_bridge.c` (13 FUSE callbacks: getattr, readdir, read, write, create, rename, mkdir, rmdir, unlink, statfs, open, flush, release), `src/ram_cache.c` (write-back cache, 64KB blocks, dirty/valid bitmaps, async flush thread), `src/journal.c` (WAL) |
 | **Talking Point** | "Mounting registers a WinFsp FUSE filesystem. Behind the scenes: cache is initialized with a background flush thread, and the journal replays any uncommitted writes from a previous crash. The drive appears as a normal Windows drive letter." |
@@ -129,7 +129,7 @@
 ```
  0:00 ─ Launch GUI                                          (Segment 1)
  0:30 ─ Scan Disks                                          (Segment 2)
- 1:00 ─ Create RAID0 Volume                                  (Segment 3)
+  1:00 ─ Create RAID1/Mirror Volume                           (Segment 3)
  2:00 ─ Mount + Explorer Verify                              (Segment 4)
  3:00 ─ Create File on RAID Volume                           (Segment 5)
  3:30 ─ Unmount                                             (Segment 6)
@@ -151,7 +151,7 @@
 | No physical disks | Use pool files on existing NTFS drive. `init 0:1024 1:1024` creates file-backed pools. |
 | WinFsp not installed | Show welcome dialog detection. All CLI workflows work without mount. Demonstrate CLI + test commands. |
 | GUI fails to launch (no D3D11) | Use `--cli` mode for full demo. Run `quick` command. |
-| Only 1 disk available | Show planner panel. Explain RAID0 requires 2+. Demonstrate with simulated pool files. |
+| Only 1 disk available | Show planner panel. Explain RAID1 requires 2+. Demonstrate with simulated pool files. |
 | Mount fails (letter conflict) | Change mount letter in Settings or use different letter. |
 
 ---
