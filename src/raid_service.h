@@ -5,6 +5,7 @@
 #include "metadata_manager.h"
 #include "volume_manager.h"
 #include "planner_engine.h"
+#include "raid_query.h"
 
 /* ---- Lifecycle ---- */
 RC raid_init(void);

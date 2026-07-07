@@ -34,5 +34,4 @@ typedef struct {
 void ui_get_disk_summary(UI_DISK_SUMMARY* out);
 void ui_get_volume_info(UI_VOLUME_INFO* out);
 void ui_get_health_summary(UI_HEALTH_SUMMARY* out);
-uint32_t ui_get_state(void);
 const char* ui_get_state_str(void);

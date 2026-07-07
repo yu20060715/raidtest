@@ -48,6 +48,8 @@ typedef struct {
     /* Timestamp of last calc */
     uint64_t last_read_bytes;
     uint64_t last_write_bytes;
+    uint64_t last_read_ops;
+    uint64_t last_write_ops;
     double   last_sample_time;
 } IO_PROFILER;
 

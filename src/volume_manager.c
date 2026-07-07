@@ -10,53 +10,51 @@
 
 void volume_gen_uuid(STRIPE_VOLUME* vol) {
     uuid_generate(&vol->volume_uuid);
-    vol->created_time = 0;
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER ui;
+    ui.LowPart = ft.dwLowDateTime;
+    ui.HighPart = ft.dwHighDateTime;
+    vol->created_time = ui.QuadPart;
+}
+
+typedef bool (*volume_create_fn)(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count);
+
+static bool stripe_volume_create_wrap(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
+    return stripe_volume_create(vol, disks, disk_count, DEFAULT_STRIPE_UNIT);
+}
+
+static bool volume_create_internal(STRIPE_VOLUME* vol, DISK_INFO** disks,
+                                    uint32_t disk_count, volume_create_fn fn,
+                                    const char* raid_label) {
+    cleanup_volume_cache(vol);
+    stripe_volume_destroy(vol);
+
+    uint32_t opened = 0;
+    for (uint32_t i = 0; i < disk_count; i++) {
+        if (!pool_file_open(disks[i])) {
+            for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
+            return false;
+        }
+        opened++;
+    }
+    if (!fn(vol, disks, disk_count)) {
+        for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
+        return false;
+    }
+    volume_gen_uuid(vol);
+    if (!metadata_write(vol))
+        LOG_WARN("Superblock write failed — volume is volatile");
+    event_bus_publish(EVENT_VOLUME_CREATED, raid_label);
+    return true;
 }
 
 bool volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
-    cleanup_volume_cache(vol);
-    stripe_volume_destroy(vol);
-
-    uint32_t opened = 0;
-    for (uint32_t i = 0; i < disk_count; i++) {
-        if (!pool_file_open(disks[i])) {
-            for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
-            return false;
-        }
-        opened++;
-    }
-    if (!stripe_volume_create(vol, disks, disk_count, DEFAULT_STRIPE_UNIT)) {
-        for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
-        return false;
-    }
-    volume_gen_uuid(vol);
-    if (!metadata_write(vol))
-        LOG_WARN("Superblock write failed — volume is volatile");
-    event_bus_publish(EVENT_VOLUME_CREATED, "RAID0");
-    return true;
+    return volume_create_internal(vol, disks, disk_count, stripe_volume_create_wrap, "RAID0");
 }
 
 bool volume_mirror(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count) {
-    cleanup_volume_cache(vol);
-    stripe_volume_destroy(vol);
-
-    uint32_t opened = 0;
-    for (uint32_t i = 0; i < disk_count; i++) {
-        if (!pool_file_open(disks[i])) {
-            for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
-            return false;
-        }
-        opened++;
-    }
-    if (!mirror_volume_create(vol, disks, disk_count)) {
-        for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
-        return false;
-    }
-    volume_gen_uuid(vol);
-    if (!metadata_write(vol))
-        LOG_WARN("Superblock write failed — volume is volatile");
-    event_bus_publish(EVENT_VOLUME_CREATED, "RAID1");
-    return true;
+    return volume_create_internal(vol, disks, disk_count, mirror_volume_create, "RAID1");
 }
 
 bool volume_load(STRIPE_VOLUME* vol, DISK_INFO* disks_out, uint32_t* disk_count,

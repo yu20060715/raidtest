@@ -2,6 +2,9 @@
 build/
 *.o
 *.exe
+
+# Runtime dependencies (keep tracked)
+!winfsp-x64.dll
 *.dll
 
 # Stress test executables

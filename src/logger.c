@@ -12,7 +12,7 @@ void log_init(void) {
     InitializeCriticalSection(&g_log_lock);
     g_min_level = LOG_LEVEL_INFO;
     g_log_file = NULL;
-    g_timestamp = false;
+    g_timestamp = true;
     g_log_init_done = true;
 }
 

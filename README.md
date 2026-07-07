@@ -3,7 +3,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)]()
 [![GUI](https://img.shields.io/badge/GUI-Dear%20ImGui%20%2B%20DirectX%2011-green)]()
 [![API](https://img.shields.io/badge/Mount-WinFsp%20FUSE-orange)]()
-[![Status](https://img.shields.io/badge/Status-RC2-yellow)]()
+[![Status](https://img.shields.io/badge/Status-RC4-yellow)]()
 
 **RAIDTEST** is a Windows-native software RAID prototype that creates, mounts, and manages virtual RAID volumes from physical disks or pool files. Originally a CLI tool, it now includes a full graphical interface built with Dear ImGui and DirectX 11.
 
@@ -48,10 +48,11 @@
 
 ### Command-Line Interface (CLI)
 - Full feature parity with GUI
-- `scan`, `init`, `create`, `mirror`, `mount`, `unmount`, `load`, `destroy`, `purge`
-- `check`, `metadata`, `info`, `bench`, `planner`, `events`, `simulate`, `help`
-- `--gui` flag launches the graphical interface
-- Auto-mode: 18 CLI commands with 7-state validation
+- `scan`, `select`, `init`, `create`, `mirror`, `mount`, `unmount`, `load`, `destroy`, `purge`
+- `check`, `metadata`, `info`, `status`, `test`, `bench`, `planner`, `events`, `simulate`, `help`
+- `expand`, `mapdrive`, `random`, `benchfs`, `wizard`, `quick`, `cleanup`, `exit`
+- Auto-mode: auto-restore from saved config on empty input
+- 33 CLI commands with 7-state validation
 
 ---
 
@@ -140,6 +141,12 @@ raidtest.exe --gui
 ### CLI Mode (Developer)
 
 ```
+raidtest.exe --cli
+```
+
+Or pass a single command:
+
+```
 raidtest.exe scan
 raidtest.exe init 0:1024 1:1024
 raidtest.exe create
@@ -153,21 +160,37 @@ raidtest.exe destroy
 | Command | Description |
 |---------|-------------|
 | `scan` | Detect physical disks |
+| `select <id> ...` | Select disks by ID |
 | `init <id:mb> ...` | Create pool files (e.g., `init 0:1024 1:1024`) |
-| `create` | Create RAID volume from selected disks |
-| `mirror` | Create RAID1 from selected disks |
+| `create` | Create RAID0 stripe volume |
+| `mirror` | Create RAID1 mirror volume |
+| `expand <id:mb> ...` | Expand volume with new disks |
 | `mount <letter>` | Mount volume to a drive letter |
 | `unmount` | Unmount volume |
-| `load` | Restore volume from metadata |
+| `load` | Restore volume from superblock |
 | `destroy` | Delete volume and pool files |
 | `purge` | Remove all metadata from disks |
 | `check` | Health check |
 | `info` | Volume information |
 | `metadata <disk>` | Show superblock details |
-| `bench <letter>` | Run throughput benchmark |
+| `bench <size>` | Benchmark selected disks |
+| `benchfs <size> <block>` | Filesystem-level benchmark |
 | `planner` | Show capacity planner |
 | `events` | Show event log |
-| `help` | Command list |
+| `cache <size>\|off\|wt` | Configure write-back cache |
+| `random <ops> <maxkb>` | Random I/O stress test |
+| `simulate <idx> <mode>` | Simulate disk failure |
+| `status` | Show volume status |
+| `test` | Run diagnostic tests |
+| `mapdrive <id> <letter>` | Assign drive letter to disk |
+| `map` | Display LBA mapping table |
+| `config-save` | Save config to JSON |
+| `config-load` | Load config from JSON |
+| `quick` | All-in-one setup |
+| `wizard` | Guided setup wizard |
+| `cleanup` | Release all resources |
+| `exit` / `quit` | Exit the CLI |
+| `help` | Show command list |
 
 ---
 
@@ -181,7 +204,7 @@ See [DEMO.md](DEMO.md) for a complete step-by-step demo:
 
 ## Tests
 
-### 36 Test Scenarios (All Passing)
+### 39 Test Scenarios (All Passing)
 
 | Suite | Tests | Area |
 |-------|-------|------|
@@ -189,7 +212,7 @@ See [DEMO.md](DEMO.md) for a complete step-by-step demo:
 | Cache | 8 | Write-back, flush, dirty block, cross-block |
 | Journal | 4 | Write-ahead log, replay, recovery |
 | Mirror Engine | 6 | RAID1 create/degraded/rebuild |
-| Stripe Engine | 7 | RAID0 create/normalize/expand |
+| Stripe Engine | 8 | RAID0 create/normalize/expand/cache+expand |
 
 ```batch
 raidtest_tests.exe
@@ -208,7 +231,7 @@ Tests use real files on `C:\RAIDTEST\` (no mocking layer). Run as Administrator.
 - **Journal is prototype** — no circular buffering, no data CRC
 - **No S.M.A.R.T.** — disk health attributes not read
 - **No encryption** — data on disk is plaintext
-- **No boot-time auto-load** — manual scan + create each session
+- **Auto-restore on startup** — restores from saved config if available, otherwise runs Quick Setup
 
 Full list: [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)
 
@@ -219,7 +242,7 @@ Full list: [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)
 ```
 raidv3/
 ├── src/               # C/C++ source files (20+ modules)
-│   ├── gui.cpp        # Dear ImGui GUI (~770 lines)
+│   ├── gui.cpp        # Dear ImGui GUI (~1600 lines)
 │   ├── raid_service.* # Unified API layer
 │   ├── device_manager.*
 │   ├── volume_manager.*
@@ -240,8 +263,9 @@ raidv3/
 ├── DEMO.md            # Demo walkthrough
 ├── README.md          # This file
 ├── CHANGELOG.md       # Version history
-├── RC1_REPORT.md      # RC1 assessment
-└── docs/              # Additional documentation
+├── docs/              # Additional documentation
+│   └── archive/
+│       └── RC1_REPORT.md
 ```
 
 ---
@@ -254,10 +278,13 @@ raidv3/
 | 4 | Validation, stabilization, docs | ✅ Complete |
 | 5 | Architecture refactoring (7 new modules) | ✅ Complete |
 | 6 | GUI MVP (Dear ImGui + DX11) | ✅ Complete |
-| **7** | **RC1 — Polish, docs, release** | **In Progress** |
-| 8 | Demo prep, thesis, performance validation | Upcoming |
+| 7 | RC1 — Polish, docs, release | ✅ Complete |
+| 8 | Demo prep, thesis, performance validation | ✅ Complete |
+| RC2 | FUSE race fixes, cache stability | ✅ Complete |
+| RC3 | Event bus, cleanup hardening | ✅ Complete |
+| RC4 | UI polish, testing, documentation normalization | ✅ Complete |
 
-Full roadmap: [ROADMAP.md](ROADMAP.md)
+Full roadmap: [FUTURE_ROADMAP.md](FUTURE_ROADMAP.md)
 
 ---
 

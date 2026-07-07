@@ -11,12 +11,6 @@ bool metadata_write(STRIPE_VOLUME* vol) {
     return ok;
 }
 
-bool metadata_upgrade(SUPERBLOCK* sb) {
-    if (!sb) return false;
-    if (sb->version == SUPERBLOCK_VERSION) return true;
-    return false; /* raw upgrade not supported — superblock_read() handles it */
-}
-
 void metadata_dump(const SUPERBLOCK* sb, char* out, size_t out_size) {
     superblock_format_str(sb, out, out_size);
 }

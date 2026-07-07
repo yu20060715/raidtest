@@ -1,5 +1,4 @@
 #include "superblock.h"
-#include "mirror_engine.h"
 #include "pool_io.h"
 
 /* ---- v1 struct for backward-compat reads ---- */
@@ -34,12 +33,6 @@ typedef struct {
 } SUPERBLOCK_V2;
 
 #pragma pack(pop)
-
-static uint64_t get_filetime_now(void) {
-    FILETIME ft;
-    GetSystemTimeAsFileTime(&ft);
-    return ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
-}
 
 static int64_t filetime_to_unix_sec(uint64_t ft) {
     return (int64_t)((ft - 116444736000000000ULL) / 10000000);

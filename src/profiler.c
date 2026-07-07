@@ -33,7 +33,7 @@ void profiler_read_begin(uint32_t* slot_out) {
     if (!slot_out) return;
     InterlockedIncrement(&g_profiler.pending_ios);
     int slot = find_free_slot();
-    if (slot < 0) { *slot_out = 0; return; }
+    if (slot < 0) { *slot_out = 255; return; }
     g_profiler.samples[slot].start_time = now_ms();
     g_profiler.samples[slot].active = true;
     *slot_out = (uint32_t)slot;
@@ -66,7 +66,7 @@ void profiler_write_begin(uint32_t* slot_out) {
     g_profiler.current_queue_depth = qd;
 
     int slot = find_free_slot();
-    if (slot < 0) { *slot_out = 0; return; }
+    if (slot < 0) { *slot_out = 255; return; }
     g_profiler.samples[slot].start_time = now_ms();
     g_profiler.samples[slot].active = true;
     *slot_out = (uint32_t)slot;
@@ -112,15 +112,19 @@ void profiler_update_rates(uint64_t total_read_bytes, uint64_t total_write_bytes
         g_profiler.avg_write_latency_ms = g_profiler.write_latency_sum_ms / g_profiler.write_latency_count;
 
     if (dt > 0) {
-        uint64_t prev_read = g_profiler.last_read_bytes;
-        g_profiler.avg_iops_read = (double)(g_profiler.read_ops - (prev_read ? 0 : 0)) / dt;
-        uint64_t prev_write = g_profiler.last_write_bytes;
-        g_profiler.avg_iops_write = (double)(g_profiler.write_ops - (prev_write ? 0 : 0)) / dt;
+        uint64_t delta_read_ops = g_profiler.read_ops > g_profiler.last_read_ops
+            ? g_profiler.read_ops - g_profiler.last_read_ops : 0;
+        uint64_t delta_write_ops = g_profiler.write_ops > g_profiler.last_write_ops
+            ? g_profiler.write_ops - g_profiler.last_write_ops : 0;
+        g_profiler.avg_iops_read = (double)delta_read_ops / dt;
+        g_profiler.avg_iops_write = (double)delta_write_ops / dt;
     }
 
     g_profiler.avg_queue_depth = g_profiler.current_queue_depth;
 
     g_profiler.last_read_bytes = total_read_bytes;
     g_profiler.last_write_bytes = total_write_bytes;
+    g_profiler.last_read_ops = g_profiler.read_ops;
+    g_profiler.last_write_ops = g_profiler.write_ops;
     g_profiler.last_sample_time = now_t;
 }

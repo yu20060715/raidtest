@@ -32,12 +32,13 @@ bool mirror_volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_c
 
 bool mirror_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offset, uint32_t length) {
     if (!vol || !buffer || length == 0) return false;
-    if (virtual_offset + length > vol->virtual_total_bytes) return false;
+    if (length > vol->virtual_total_bytes || virtual_offset > vol->virtual_total_bytes - length) return false;
+    CHECK_DISKS(vol);
 
     if (vol->cache_enabled && !vol->cache_flush_in_progress &&
         virtual_offset + length <= vol->cache.cache_size_bytes) {
         bool ok = cache_read(&vol->cache, buffer, virtual_offset, length);
-        if (ok) vol->bytes_read += length;
+        if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
         return ok;
     }
 
@@ -55,18 +56,18 @@ bool mirror_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offse
     for (uint32_t i = 0; i < vol->disk_count; i++) {
         if (!InterlockedCompareExchange(&vol->disks[i]->healthy, 1, 1)) continue;
         if (vol->disks[i]->faulty) {
-            InterlockedExchange(&vol->disks[i]->healthy, 0);
-            InterlockedDecrement(&vol->healthy_count);
+            if (InterlockedExchange(&vol->disks[i]->healthy, 0) == 1)
+                InterlockedDecrement(&vol->healthy_count);
             continue;
         }
 
         if (stripe_read_raw(vol->disks[i], buffer, virtual_offset, length)) {
-            vol->bytes_read += length;
+            InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
             return true;
         }
 
-        InterlockedExchange(&vol->disks[i]->healthy, 0);
-        InterlockedDecrement(&vol->healthy_count);
+        if (InterlockedExchange(&vol->disks[i]->healthy, 0) == 1)
+            InterlockedDecrement(&vol->healthy_count);
         LOG_WARN("Mirror disk %u read failed, marked unhealthy (%u remaining)",
                  i, (uint32_t)vol->healthy_count);
     }
@@ -76,20 +77,22 @@ bool mirror_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offse
 
 static bool mirror_write_to_all(STRIPE_VOLUME* vol, const void* buffer,
                                 uint64_t virtual_offset, uint32_t length) {
+    if (!vol || !buffer || length == 0) return false;
+    if (length > vol->virtual_total_bytes || virtual_offset > vol->virtual_total_bytes - length) return false;
     bool any_ok = false;
     for (uint32_t i = 0; i < vol->disk_count; i++) {
         if (!InterlockedCompareExchange(&vol->disks[i]->healthy, 1, 1)) continue;
         if (vol->disks[i]->faulty) {
-            InterlockedExchange(&vol->disks[i]->healthy, 0);
-            InterlockedDecrement(&vol->healthy_count);
+            if (InterlockedExchange(&vol->disks[i]->healthy, 0) == 1)
+                InterlockedDecrement(&vol->healthy_count);
             continue;
         }
 
         if (stripe_write_raw(vol->disks[i], buffer, virtual_offset, length)) {
             any_ok = true;
         } else {
-            InterlockedExchange(&vol->disks[i]->healthy, 0);
-            InterlockedDecrement(&vol->healthy_count);
+            if (InterlockedExchange(&vol->disks[i]->healthy, 0) == 1)
+                InterlockedDecrement(&vol->healthy_count);
             LOG_WARN("Mirror disk %u write failed, marked unhealthy (%u remaining)",
                      i, (uint32_t)vol->healthy_count);
         }
@@ -100,7 +103,8 @@ static bool mirror_write_to_all(STRIPE_VOLUME* vol, const void* buffer,
 bool mirror_volume_write(STRIPE_VOLUME* vol, const void* buffer,
                          uint64_t virtual_offset, uint32_t length) {
     if (!vol || !buffer || length == 0) return false;
-    if (virtual_offset + length > vol->virtual_total_bytes) return false;
+    if (length > vol->virtual_total_bytes || virtual_offset > vol->virtual_total_bytes - length) return false;
+    CHECK_DISKS(vol);
 
     if (vol->cache_enabled && !vol->cache_flush_in_progress &&
         virtual_offset + length <= vol->cache.cache_size_bytes) {
@@ -110,17 +114,18 @@ bool mirror_volume_write(STRIPE_VOLUME* vol, const void* buffer,
                 ok = false;
             }
         }
-        if (ok) vol->bytes_written += length;
+        if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, length);
         return ok;
     }
 
     bool any_ok = mirror_write_to_all(vol, buffer, virtual_offset, length);
-    if (any_ok) vol->bytes_written += length;
+    if (any_ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, length);
     return any_ok;
 }
 
 bool mirror_volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO* replacement, uint32_t replace_idx) {
     if (!vol || !replacement || replace_idx >= vol->disk_count) return false;
+    CHECK_DISKS(vol);
 
     uint64_t total = vol->virtual_total_bytes;
     if (total == 0) return false;
@@ -166,7 +171,7 @@ bool mirror_volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO* replacement, uint32_t 
     VirtualFree(buf, 0, MEM_RELEASE);
 
     if (ok) {
-        vol->disks[replace_idx] = replacement;
+        InterlockedExchangePointer((void* volatile*)&vol->disks[replace_idx], replacement);
         InterlockedExchange(&replacement->healthy, 1);
         InterlockedIncrement(&vol->healthy_count);
         LOG_OK("Rebuild complete: disk %u replaced", replace_idx);

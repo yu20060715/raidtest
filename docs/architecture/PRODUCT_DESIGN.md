@@ -52,16 +52,20 @@
 | `--quick` | Quick all-in-one setup |
 | `--cli` | Force CLI mode (no GUI) |
 
-### GUI Actions (10 buttons)
+### GUI Actions (14 buttons + dialogs)
 | Button | Worker Action | Backend |
-|---|---|---|
+|--------|------|---------|
 | Scan | `W_SCAN` | `raid_scan()` |
+| Quick Setup | `W_QUICK_SETUP` | `raid_scan()` + `raid_init_pools()` + `raid_create()` + `raid_cache()` + `raid_mount()` |
 | Create | `W_CREATE` | `raid_init_pools()` + `raid_create()` |
 | Mirror | `W_MIRROR` | `raid_mirror()` |
 | Mount | `W_MOUNT` | `raid_mount()` |
 | Unmount | `W_UNMOUNT` | `raid_unmount()` |
 | Destroy | `W_DESTROY` | `raid_destroy()` (with confirm dialog) |
 | Bench | `W_BENCH` | Raw `CreateFile`/`ReadFile`/`WriteFile` |
+| Restore Volume | `W_LOAD_SUPERBLOCK` / `W_LOAD_CONFIG` | `raid_load()` or config restore |
+| Rebuild | `W_REBUILD` | `raid_rebuild()` (via popup wizard) |
+| Health Check | `W_CHECK` | `raid_check()` |
 | Export | `W_EXPORT` | Write diagnostics to temp dir |
 | Refresh | `W_REFRESH` | `refresh_ui_model()` |
 | (Purge) | `W_PURGE` | `raid_purge()` (hidden behind confirm) |
@@ -283,7 +287,7 @@ These are infrastructure components. They execute automatically or are called by
 │ └─────────────────────────────────────────────────────────────┘ │
 │                                                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  Status: Ready  │  Mode: Beginner  │  RAIDTEST v1.0 RC2        │
+│  Status: Ready  │  Mode: Beginner  │  RAIDTEST v1.0 RC4        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -310,19 +314,19 @@ These are infrastructure components. They execute automatically or are called by
 | Mount | CLI `mount`, GUI Mount btn | **Beginner** | Core workflow step |
 | Unmount | CLI `unmount`, GUI Unmount btn | **Beginner** | Core workflow step |
 | Destroy | CLI `destroy`, GUI Destroy btn | **Beginner** | Core workflow step (with confirmation) |
-| Quick Setup | CLI `quick`, no GUI btn | **Beginner** | All-in-one beginner flow |
-| Wizard | CLI `wizard`, no GUI btn | **Beginner** | Guided setup for learning |
+| Quick Setup | CLI `quick`, GUI Quick Setup btn | **Beginner** | All-in-one beginner flow |
+| Wizard | CLI `wizard`, GUI Welcome Wizard | **Beginner** | Guided setup for learning |
 | Volume benchmark | GUI Bench btn (raw I/O) | **Beginner** | Simple speed check |
 | Per-disk benchmark | CLI `bench` | **Advanced** | Diagnostic before pool creation |
 | Mirror (RAID1) | CLI `mirror`, GUI Mirror btn | **Advanced** | Requires RAID level choice |
-| Cache config | CLI `cache`, no GUI panel | **Advanced** | Requires understanding write-back vs write-through |
-| Restore from superblock | CLI `load`, no GUI btn | **Advanced** | Requires understanding persistence |
+| Cache config | CLI `cache`, GUI Settings cache size | **Advanced** | Requires understanding write-back vs write-through |
+| Restore from superblock | CLI `load`, GUI Restore Volume btn | **Advanced** | Requires understanding persistence |
 | Expand volume | CLI `expand`, no GUI btn | **Advanced** | Requires understanding stripe expansion |
-| Mirror rebuild | CLI `rebuild`, no GUI btn | **Advanced** | Requires identifying failed disk |
-| Health check | CLI `check` | **Advanced** | Manual consistency verification |
+| Mirror rebuild | CLI `rebuild`, GUI Rebuild wizard | **Advanced** | Requires identifying failed disk |
+| Health check | CLI `check`, GUI Health Check btn + dashboard | **Advanced** | Manual consistency verification |
 | Planner | CLI `planner`, GUI Planner panel | **Advanced** | Capacity planning tool |
 | Export diagnostics | GUI Export btn | **Advanced** | Support/debugging aid |
-| Save/Load config | CLI `config-save/load` | **Advanced** | Power user persistence |
+| Save/Load config | CLI `config-save/load`, GUI Save Settings btn | **Advanced** | Power user persistence |
 | Purge metadata | CLI `purge` | **Advanced** | Destructive cleanup |
 | Manual drive mapping | CLI `mapdrive` | **Advanced** | Manual drive letter assignment |
 | Volume info | CLI `info` | **Advanced** | Detailed status report |

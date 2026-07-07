@@ -1,0 +1,703 @@
+# RAIDV3 Implementation Guide
+
+目標只有一個：**把 RAIDV3 做成可以穩定展示的大學畢業專題正式專案**。
+排序原則是：先保資料正確，再保流程一致，再保 GUI / CLI 真實可達，最後才做架構與文件整理。
+
+---
+
+## Phase 1
+
+### Task 1 — Cache flush consistency and shutdown ordering
+
+**Priority:** P0
+**Risk:** High
+
+1. **名稱**
+   修正 RAM cache flush 一致性與關閉順序。
+
+2. **為什麼要改**
+   `cache_flush_all()` 目前有資料一致性風險：flush 過程中 dirty bit 的處理與實際寫入順序不夠安全，對畢業專題來說這是最不能留下的問題。
+   這不是單純效能問題，是可能造成資料錯寫、舊資料覆蓋新資料的核心風險。
+
+3. **哪些 source file**
+
+   * `src/ram_cache.c`
+   * `src/ram_cache.h`
+   * `src/cleanup.c`
+   * `src/raid_service.c`
+   * `src/volume_manager.c`
+
+4. **哪些 function**
+
+   * `cache_init`
+   * `cache_destroy`
+   * `cache_write`
+   * `cache_read`
+   * `cache_flush_all`
+   * `cache_flush_thread`
+   * `cleanup_volume_cache`
+   * `cleanup_cache`
+   * `raid_cache_locked`
+
+5. **哪些 struct**
+
+   * `RAM_CACHE`
+   * `STRIPE_VOLUME`
+
+6. **哪些 global**
+
+   * `g_state.cache.flush_thread`
+   * `g_state.cache.cache_on`
+   * `g_state.vol.volume.cache_enabled`
+   * `g_state.vol.volume.cache_flush_in_progress`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * 把 cache flush 的「dirty bit 清除時機」改成只在資料真正安全落盤後才視為完成。
+   * flush thread 與 `cache off` / cleanup / destroy 的順序要統一，不能留下半關閉狀態。
+   * 若 flush 失敗，必須保留 dirty 狀態，讓後續能重試。
+   * 保留 cache 功能，但把一致性當成第一優先。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`, `build_asan.bat`
+   * **Tests:** `src/test_cache.c`, `src/test_journal.c`, `build_stress.bat` 相關壓力測試
+   * **GUI:** 開啟 cache → 寫入資料 → 關閉 cache → 重新開啟 → 再寫入，確認流程穩定
+   * **CLI:** `cache`, `cache off`, `cache wt`, `random`, `benchfs`
+
+9. **修改風險**
+   High
+
+10. **優先等級**
+    P0
+
+---
+
+### Task 2 — Canonicalize setup / restore / mount workflow
+
+**Priority:** P1
+**Risk:** High
+
+1. **名稱**
+   統一 quick setup、restore、mount 的流程語義。
+
+2. **為什麼要改**
+   現在 GUI 與 CLI 的 quick / restore 行為不完全一致。
+   `quick` 在 CLI 會停下來等輸入，GUI quick setup 則是自動化工作流；`--auto`、`restore from config`、`restore from superblock` 之間也有語義差。
+   這會讓教授在 demo 時一問就露餡。
+
+3. **哪些 source file**
+
+   * `src/main.c`
+   * `src/cmd_handler.c`
+   * `src/raid_service.c`
+   * `src/volume_manager.c`
+   * `src/config.c`
+   * `src/wizard.c`
+   * `src/gui.cpp`
+
+4. **哪些 function**
+
+   * `do_restore`
+   * `cli_main`
+   * `cmd_quick`
+   * `cmd_process_auto`
+   * `raid_quick`
+   * `raid_load`
+   * `raid_create`
+   * `raid_mount`
+   * `raid_config_save`
+   * `raid_config_load`
+   * `ShowWelcomeWizard`
+   * `ShowRestoreWizard`
+   * `W_QUICK_SETUP`
+   * `W_LOAD_SUPERBLOCK`
+   * `W_LOAD_CONFIG`
+
+5. **哪些 struct**
+
+   * `APP_CONFIG`
+   * `APP_STATE`
+   * `DISK_CONFIG`
+   * `STRIPE_VOLUME`
+
+6. **哪些 global**
+
+   * `g_state`
+   * `g_gui`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * 定義一個「唯一的」quick setup 語義。
+   * 若 quick 是自動化，GUI / CLI / auto 都應走同一條後端序列；若 quick 是互動式，就不要在文件與按鈕上宣稱是全自動。
+   * restore 流程要先驗證磁碟數、再 create / mount / cache，避免半套復原。
+   * 不要留下「看起來像完整復原，其實只做一部分」的路徑。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`
+   * **Tests:** 既有 test suite、restore / config 相關回歸測試
+   * **GUI:** Welcome → Quick Setup、Restore Wizard、Rebuild Wizard 的完整走一次
+   * **CLI:** `quick`, `--auto G`, `config-load`, `load`, `mount`, `unmount`
+
+9. **修改風險**
+   High
+
+10. **優先等級**
+    P1
+
+---
+
+## Phase 2
+
+### Task 3 — Remove dead GUI state or surface real cache controls
+
+**Priority:** P1
+**Risk:** Medium
+
+1. **名稱**
+   清掉死掉的 GUI 狀態，或把 cache 控制真的接到 GUI。
+
+2. **為什麼要改**
+   現在 GUI 裡有明顯的死路徑與假狀態：
+
+   * `Health Dashboard` 有函式，但沒有入口
+   * `Confirm Purge` 沒有被真正觸發
+   * developer console 的 state 存在，但沒有真正的 ImGui console panel
+   * `W_CACHE_ENABLE / W_CACHE_DISABLE / W_CACHE_FLUSH` 有 worker case，但 GUI 沒有對應入口
+
+   這些東西會讓專題看起來像「做過一半」。
+
+3. **哪些 source file**
+
+   * `src/gui.cpp`
+   * `src/gui.h`
+   * `src/cmd_handler.c`（如果要共用 CLI 文案）
+
+4. **哪些 function**
+
+   * `RenderMainUI`
+   * `ShowHealthDashboard`
+   * `ShowConfirmPurge`
+   * `ShowWelcomeWizard`
+   * `ShowBeginnerPanel`
+   * `ShowToolbar`
+   * `start_worker`
+   * `worker_thread`
+   * `check_worker_done`
+
+5. **哪些 struct**
+
+   * GUI 內部匿名 `g_gui` state
+   * `Toast`
+   * `PerfSample`
+
+6. **哪些 global**
+
+   * `show_confirm_exit`
+   * `show_confirm_purge`
+   * `console_input`
+   * `console_output`
+   * `console_output_len`
+   * `console_history`
+   * `console_history_count`
+   * `console_history_pos`
+   * `console_scroll_to_bottom`
+   * `cache_pool_size_mb`
+   * `restore_checked`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * 沒有實際 UI 的 console 狀態直接刪掉，不要留假資料。
+   * `Health Dashboard` 與 `Confirm Purge` 二選一：要嘛真正接線，要嘛刪掉。
+   * `W_CACHE_*` 若要保留，就在 Advanced / Developer mode 加上清楚入口；若不做 GUI cache panel，就把這些 worker case 一起清掉。
+   * 讓「每一個看得到的按鈕」都對應到「真的會做事的 backend」。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`
+   * **Tests:** GUI smoke test、事件流測試
+   * **GUI:** 主畫面不再出現無法觸發的 popup；developer mode 不再宣稱有不存在的 console
+   * **CLI:** cache 仍可透過 CLI 使用；GUI 沒有殘留假入口
+
+9. **修改風險**
+   Medium
+
+10. **優先等級**
+    P1
+
+---
+
+### Task 4 — Fix GUI mode gating and graduation demo panel structure
+
+**Priority:** P2
+**Risk:** Medium
+
+1. **名稱**
+   整理 Beginner / Advanced / Developer 三種模式的面板邊界。
+
+2. **為什麼要改**
+   這個專案要拿去給教授看，最重要的是「故事清楚」。
+   Beginner / Advanced / Developer 現在有概念，但要把可見功能與實際 backend 對齊，避免出現「模式說有某功能，實際沒有」的情況。
+
+3. **哪些 source file**
+
+   * `src/gui.cpp`
+   * `src/ui_model.c`
+   * `src/event_bus.c`
+   * `src/profiler.c`
+   * `src/raid_service.c`
+
+4. **哪些 function**
+
+   * `ShowModeTabs`
+   * `ShowBeginnerPanel`
+   * `ShowDiskList`
+   * `ShowPlanner`
+   * `ShowVolumeInfo`
+   * `ShowPerformancePanel`
+   * `ShowPerformanceDashboard`
+   * `ShowEventLog`
+   * `ShowStatusBar`
+
+5. **哪些 struct**
+
+   * `UI_DISK_SUMMARY`
+   * `UI_VOLUME_INFO`
+   * `UI_HEALTH_SUMMARY`
+
+6. **哪些 global**
+
+   * `g_gui.mode`
+   * `g_gui.state_value`
+   * `g_gui.vol_info`
+   * `g_gui.disk_summary`
+   * `g_gui.health`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * Beginner 模式只放安全且容易解釋的操作。
+   * Advanced 模式放 create / mirror / mount / restore / benchmark / unmount。
+   * Developer 模式放 diagnostics / performance / export。
+   * 模式切換後，畫面上出現的每個功能都要能被 backend 真正支援。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`
+   * **Tests:** 模式切換 smoke test
+   * **GUI:** 三種模式各走一次，確認顯示內容與功能一致
+   * **CLI:** 不受 mode 影響的命令仍可用
+
+9. **修改風險**
+   Medium
+
+10. **優先等級**
+    P2
+
+---
+
+### Task 5 — Make CLI help / banner text match reality
+
+**Priority:** P1
+**Risk:** Low
+
+1. **名稱**
+   修正 CLI 說明文字與版本字串。
+
+2. **為什麼要改**
+   CLI 是真的可用，但 help / banner 仍有語意漂移。
+   最明顯的是版本標記不一致，以及 `quick` 說法比實作更像「全自動」，會讓使用者誤解。
+
+3. **哪些 source file**
+
+   * `src/cmd_handler.c`
+   * `src/main.c`
+
+4. **哪些 function**
+
+   * `cmd_print_banner`
+   * `cmd_help`
+   * `cmd_process`
+   * `cmd_interactive`
+   * `cli_main`
+   * `auto_restore_or_quick`
+
+5. **哪些 struct**
+
+   * `APP_STATE`
+
+6. **哪些 global**
+
+   * `g_state`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * help 文案要像規格，不要像宣傳。
+   * banner 與 GUI 標題要同一版號。
+   * `quick`, `--auto`, `exit/quit`, `cache wt/off` 的行為要寫清楚。
+   * 既有 command 不必刪，但描述要忠實。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`
+   * **Tests:** CLI help smoke test
+   * **GUI:** 不適用，僅確認版本字串同步
+   * **CLI:** `--help`, `help`, `quick`, `--auto G`, `status`, `info`, `metadata`, `events`
+
+9. **修改風險**
+   Low
+
+10. **優先等級**
+    P1
+
+---
+
+## Phase 3
+
+### Task 6 — Remove unused API and stale version / feature claims
+
+**Priority:** P2
+**Risk:** Medium
+
+1. **名稱**
+   清理未使用 API 與過期功能宣告。
+
+2. **為什麼要改**
+   `metadata_upgrade()` 目前沒有實際呼叫點。
+   另外，GUI welcome text、一些文件與 banner 文字仍有 RC2 / RC4、RAID10、CLI console 等不一致說法。
+   這些在教授面前非常容易被抓出來。
+
+3. **哪些 source file**
+
+   * `src/metadata_manager.c`
+   * `src/metadata_manager.h`
+   * `src/gui.cpp`
+   * `src/cmd_handler.c`
+   * `README.md`
+   * `QUICK_START.md`
+   * `DEMO.md`
+   * `PRODUCT_DESIGN.md`
+   * `RC4_RELEASE_REPORT.md`
+   * `CHANGELOG.md`
+
+4. **哪些 function**
+
+   * `metadata_upgrade`
+   * `cmd_print_banner`
+   * `ShowWelcomeWizard`
+
+5. **哪些 struct**
+
+   * `SUPERBLOCK`
+   * `STRIPE_VOLUME`
+   * `APP_CONFIG`
+
+6. **哪些 global**
+
+   * `APP_VERSION`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * 如果版本 migration 近期不做，`metadata_upgrade` 就刪掉，不留假 API。
+   * 如果要保留，就要真正接到 metadata load path。
+   * 文件與 UI 文字要一致：
+
+     * 不要把 planner 的 RAID10 計算寫成 runtime 支援
+     * 不要宣稱有不存在的 CLI console
+     * 不要再出現 RC2 / RC4 混用
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`
+   * **Tests:** metadata load / dump tests、superblock tests
+   * **GUI:** welcome popup 文案與實作一致
+   * **CLI:** banner / help 與版本同步
+
+9. **修改風險**
+   Medium
+
+10. **優先等級**
+    P2
+
+---
+
+### Task 7 — Split the monolithic modules by ownership
+
+**Priority:** P2
+**Risk:** Medium
+
+1. **名稱**
+   拆分過大的模組與集中 ownership。
+
+2. **為什麼要改**
+   `gui.cpp` 與 `raid_service.c` 都已經大到不利維護。
+   對畢業專題而言，維護性是教授很可能會問的點。
+   現在功能雖然多，但檔案責任太雜，之後改一個功能很容易碰到別的區塊。
+
+3. **哪些 source file**
+
+   * `src/gui.cpp`
+   * `src/raid_service.c`
+   * `src/cleanup.c`
+   * `src/cmd_handler.c`
+   * `src/common.h`
+
+4. **哪些 function**
+
+   * 所有 `Show*` UI functions
+   * `RenderMainUI`
+   * `worker_thread`
+   * `start_worker`
+   * `check_worker_done`
+   * `raid_init`
+   * `raid_scan`
+   * `raid_create`
+   * `raid_mount`
+   * `raid_unmount`
+   * `raid_cache`
+   * `raid_config_save`
+   * `raid_config_load`
+   * `cleanup_*`
+
+5. **哪些 struct**
+
+   * `APP_STATE`
+   * GUI 內部匿名 `g_gui` state
+   * `DiskState`
+   * `VolumeState`
+   * `CacheState`
+   * `RuntimeState`
+   * `ConfigState`
+
+6. **哪些 global**
+
+   * `g_state`
+   * `g_state_cs`
+   * `g_gui`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * GUI 拆成 panel / worker / theme 三個責任區。
+   * RAID service 拆成 lifecycle / create-mount / cache / restore-config / maintenance。
+   * command dispatcher 改成更明確的表格或小函式集合。
+   * 保留公開 API，不要一次重構到破壞所有呼叫點。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`
+   * **Tests:** 全套單元測試與 smoke test
+   * **GUI:** 功能不變但檔案責任更清楚
+   * **CLI:** command 行為不變
+
+9. **修改風險**
+   Medium
+
+10. **優先等級**
+    P2
+
+---
+
+### Task 8 — Tighten regression coverage around the risky paths
+
+**Priority:** P2
+**Risk:** Medium
+
+1. **名稱**
+   把高風險路徑補成可回歸測試的證據。
+
+2. **為什麼要改**
+   這個專案不是不能做，而是需要證據。
+   畢業專題最怕的是「功能很多，但沒有測試能證明它真的穩」。
+   現在有測試，但還應該更聚焦在 cache、restore、concurrent I/O、failure simulation。
+
+3. **哪些 source file**
+
+   * `src/test_runner.c`
+   * `src/test_cache.c`
+   * `src/test_journal.c`
+   * `src/test_mirror.c`
+   * `src/test_stripe.c`
+   * `src/test_superblock.c`
+   * `tests/test_concurrent.c`
+   * `tests/test_metadata_corrupt.c`
+   * `tests/test_random_io.c`
+   * `tests/test_longrun.c`
+   * `stress/test_powerfail.c`
+   * `build_asan.bat`
+   * `build_stress.bat`
+
+4. **哪些 function**
+
+   * `test_run_all`
+   * 現有 cache / journal / stripe / mirror / superblock 測試案例
+   * 新增的 cache flush / restore / concurrent I/O / failure recovery 測試案例
+
+5. **哪些 struct**
+
+   * `RAM_CACHE`
+   * `STRIPE_VOLUME`
+   * `DISK_INFO`
+
+6. **哪些 global**
+
+   * `g_tests`
+   * `g_test_count`
+   * `g_test_passed`
+   * `g_test_failed`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * 優先補那幾個最容易被教授問到的失敗情境。
+   * 測試要能穩定重現，不要只做「看起來跑過」。
+   * 先補 fixed bug 的回歸測試，再補壓力測試。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build_asan.bat`, `build_stress.bat`
+   * **Tests:** `raidtest_tests_asan.exe`, `test_longrun.exe`, `test_random_io.exe`, `test_concurrent.exe`
+   * **GUI:** 不需要每個測試都進 GUI，但 GUI 需能完成 demo flow
+   * **CLI:** `test`, `random`, `benchfs`, `simulate`
+
+9. **修改風險**
+   Medium
+
+10. **優先等級**
+    P2
+
+---
+
+## Phase 4
+
+### Task 9 — Produce a professor-safe demo flow and release wording
+
+**Priority:** P3
+**Risk:** Low
+
+1. **名稱**
+   整理成教授可以直接看懂、直接操作的展示路徑。
+
+2. **為什麼要改**
+   這個專案已經夠做畢業專題，但最後得分常常卡在：
+
+   * 文件說得太滿
+   * demo 路徑不穩
+   * 教授按兩下就碰到死 UI
+   * 講 RAID10、CLI console、RC2/RC4 混用這種容易被抓的地方
+
+3. **哪些 source file**
+
+   * `README.md`
+   * `QUICK_START.md`
+   * `DEMO.md`
+   * `USER_FLOW.md`
+   * `PROFESSOR_REVIEW.md`
+   * `FINAL_RELEASE_REPORT.md`
+   * `RC4_RELEASE_REPORT.md`
+   * `src/gui.cpp` 的 welcome / status 文案
+   * `src/cmd_handler.c` 的 help 文案
+
+4. **哪些 function**
+
+   * `ShowWelcomeWizard`
+   * `ShowBeginnerPanel`
+   * `ShowRestoreWizard`
+   * `ShowRebuildWizard`
+   * `ShowExportDialog`
+   * `cmd_help`
+
+5. **哪些 struct**
+
+   * `APP_CONFIG`
+
+6. **哪些 global**
+
+   * `g_gui.settings`
+   * `g_gui.mode`
+
+7. **OpenCode 應該怎麼修改**
+   不寫 code，只改策略：
+
+   * 把 demo 走成固定腳本：scan → select/init → create/mount → read/write → unmount → restore/load → rebuild → export diagnostic。
+   * 刪掉或改寫會讓教授誤會的描述。
+   * 文件只寫「真的存在」的功能，不寫未完成或只是 planner 的概念功能。
+   * 保留已完成的核心能力，不要把專題做成空泛宣傳。
+
+8. **修改完成後如何驗證**
+
+   * **Build:** `build.bat`
+   * **Tests:** demo script walkthrough
+   * **GUI:** 新人模式與教學流程可一口氣走完
+   * **CLI:** 同一套 demo 流程可用命令重現
+
+9. **修改風險**
+   Low
+
+10. **優先等級**
+    P3
+
+---
+
+## Master Task List ordering
+
+### Phase 1
+
+```
+Task 1 — Cache flush consistency and shutdown ordering
+Task 2 — Canonicalize setup / restore / mount workflow
+```
+
+### Phase 2
+
+```
+Task 3 — Remove dead GUI state or surface real cache controls
+Task 4 — Fix GUI mode gating and graduation demo panel structure
+Task 5 — Make CLI help / banner text match reality
+```
+
+### Phase 3
+
+```
+Task 6 — Remove unused API and stale version / feature claims
+Task 7 — Split the monolithic modules by ownership
+Task 8 — Tighten regression coverage around the risky paths
+```
+
+### Phase 4
+
+```
+Task 9 — Produce a professor-safe demo flow and release wording
+```
+
+---
+
+## Keep / delete / defer summary
+
+**現在就該保留並強化的：**
+
+* RAID0 / RAID1 核心流程
+* scan / select / init / create / mount / unmount / load
+* benchmark / event log / diagnostics export
+* planner 作為容量估算工具
+
+**建議刪掉或隱藏的：**
+
+* 沒有真正 UI 的 console state
+* unreachable 的 Health Dashboard 與 Purge dialog，除非真的接線
+* 未使用的 `metadata_upgrade`，如果近期不做版本遷移
+* RC2 / RC4 混用
+* 把 RAID10 寫成 runtime 支援的說法
+
+**可以留到 v1.1 的：**
+
+* 真正的 GUI console
+* 額外 dashboard
+* 不是 demo 必需的視覺美化
+* 不影響功能正確性的文件潤飾

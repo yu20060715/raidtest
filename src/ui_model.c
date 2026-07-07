@@ -58,10 +58,6 @@ void ui_get_health_summary(UI_HEALTH_SUMMARY* out) {
     out->degraded = (out->healthy_count < out->total_count);
 }
 
-uint32_t ui_get_state(void) {
-    return (uint32_t)g_state.rt.state;
-}
-
 const char* ui_get_state_str(void) {
     return raid_state_str(g_state.rt.state);
 }

@@ -1,6 +1,7 @@
 #include "planner_engine.h"
 
 void planner_calculate(PLANNER_DISK* disks, uint32_t count, PLANNER_RESULT* out) {
+    if (!out) return;
     memset(out, 0, sizeof(*out));
     if (!disks || count == 0) return;
 

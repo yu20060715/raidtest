@@ -2,10 +2,19 @@
 #include "stripe_engine.h"
 #include "logger.h"
 
-static uint64_t get_filetime_now(void) {
-    FILETIME ft;
-    GetSystemTimeAsFileTime(&ft);
-    return ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+static CRITICAL_SECTION g_journal_cs;
+static bool g_journal_cs_inited = false;
+
+static void journal_lock(void) {
+    if (!g_journal_cs_inited) {
+        InitializeCriticalSection(&g_journal_cs);
+        g_journal_cs_inited = true;
+    }
+    EnterCriticalSection(&g_journal_cs);
+}
+
+static void journal_unlock(void) {
+    LeaveCriticalSection(&g_journal_cs);
 }
 
 static void make_je(JOURNAL_ENTRY* je, JOURNAL_TYPE type, uint64_t gen,
@@ -26,6 +35,7 @@ static void make_je(JOURNAL_ENTRY* je, JOURNAL_TYPE type, uint64_t gen,
 
 /* ---- Write an entry to the journal file on all disks ---- */
 static bool journal_write_entry(STRIPE_VOLUME* vol, JOURNAL_ENTRY* je) {
+    CHECK_DISKS(vol);
     bool any_ok = false;
     for (uint32_t di = 0; di < vol->disk_count; di++) {
         wchar_t path[MAX_DRIVE_PATH];
@@ -49,14 +59,18 @@ static bool journal_write_entry(STRIPE_VOLUME* vol, JOURNAL_ENTRY* je) {
 /* ---- Write BEGIN entry (start of flush cycle) ---- */
 bool journal_begin(STRIPE_VOLUME* vol) {
     if (!vol) return false;
+    journal_lock();
     JOURNAL_ENTRY je;
     make_je(&je, JT_BEGIN, vol->generation, 0, 0, NULL);
-    return journal_write_entry(vol, &je);
+    bool ok = journal_write_entry(vol, &je);
+    journal_unlock();
+    return ok;
 }
 
 /* ---- Write DATA entry + payload for a flushed block range ---- */
 bool journal_data(STRIPE_VOLUME* vol, uint64_t virtual_offset, uint32_t length, const void* data) {
     if (!vol) return false;
+    journal_lock();
     JOURNAL_ENTRY je;
     make_je(&je, JT_DATA, vol->generation, virtual_offset, length, data);
     bool any_ok = false;
@@ -76,15 +90,19 @@ bool journal_data(STRIPE_VOLUME* vol, uint64_t virtual_offset, uint32_t length, 
         CloseHandle(h);
         if (ok) any_ok = true;
     }
+    journal_unlock();
     return any_ok;
 }
 
 /* ---- Write COMMIT entry (flush cycle complete) ---- */
 bool journal_commit(STRIPE_VOLUME* vol) {
     if (!vol) return false;
+    journal_lock();
     JOURNAL_ENTRY je;
     make_je(&je, JT_COMMIT, vol->generation, 0, 0, NULL);
-    return journal_write_entry(vol, &je);
+    bool ok = journal_write_entry(vol, &je);
+    journal_unlock();
+    return ok;
 }
 
 /* ---- Recovery: scan journal files and replay incomplete flushes ---- */
@@ -103,6 +121,7 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
 
         LARGE_INTEGER file_size;
         if (!GetFileSizeEx(h, &file_size) || file_size.QuadPart == 0) { CloseHandle(h); continue; }
+        if (file_size.QuadPart > 64LL * 1024 * 1024) { CloseHandle(h); continue; }
         uint8_t* raw = (uint8_t*)malloc((size_t)file_size.QuadPart);
         if (!raw) { CloseHandle(h); continue; }
         DWORD read = 0;
@@ -169,10 +188,14 @@ bool journal_recover_all(STRIPE_VOLUME* vol) {
                                               ranges[i].off, ranges[i].len);
                 if (ok) replayed++; else failed++;
             }
-            if (failed == 0)
+            if (failed == 0) {
                 LOG_OK("Journal replay OK: %u ranges written", replayed);
-            else
-                LOG_ERROR("Journal replay: %u OK, %u FAILED", replayed, failed);
+            } else {
+                LOG_ERROR("Journal replay: %u OK, %u FAILED — journal preserved for retry",
+                          replayed, failed);
+                free(raw);
+                continue;
+            }
         } else {
             LOG_OK("Journal on %ls: clean", root);
         }

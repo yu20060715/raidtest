@@ -1,6 +1,7 @@
 #include "fuse_bridge.h"
 #include "stripe_engine.h"
 #include "ram_cache.h"
+#include "common.h"
 
 #ifdef USE_WINFSP
 #define FUSE_USE_VERSION 28
@@ -37,10 +38,9 @@ static CRITICAL_SECTION g_file_table_lock;
 static bool g_file_table_lock_init = false;
 
 static void file_table_lock_init(void) {
-    if (!g_file_table_lock_init) {
-        InitializeCriticalSection(&g_file_table_lock);
-        g_file_table_lock_init = true;
-    }
+    /* Must be called from single-threaded context (fuse_mount_volume),
+       which initializes g_file_table_lock once. This is a no-op stub
+       to keep call sites unchanged. */
 }
 
 /* Strip leading '/' */
@@ -50,7 +50,7 @@ static const char* strip_path(const char* path) {
 
 static int find_open_file_locked(const char* name) {
     wchar_t wname[256];
-    mbstowcs(wname, name, 256);
+    if (mbstowcs(wname, name, 256) == (size_t)-1) return -1;
     for (uint32_t i = 0; i < g_open_count; i++) {
         if (wcscmp(g_open_files[i].full_path, wname) == 0) return (int)i;
     }
@@ -60,11 +60,11 @@ static int find_open_file_locked(const char* name) {
 static int add_open_file_locked(const char* name, bool is_dir) {
     /* Assumes g_file_table_lock is held */
     if (g_open_count >= 64) return -1;
-    mbstowcs(g_open_files[g_open_count].full_path, name, 256);
+    if (mbstowcs(g_open_files[g_open_count].full_path, name, 256) == (size_t)-1) return -1;
     g_open_files[g_open_count].is_dir = is_dir;
     g_open_files[g_open_count].size = 0;
     int idx = (int)g_open_count;
-    InterlockedIncrement((volatile LONG*)&g_open_count);
+    g_open_count++;
     return idx;
 }
 
@@ -88,17 +88,22 @@ static uint64_t remove_open_file_get_size(const char* name) {
 
 /* Check if path refers to an existing directory */
 static bool is_dir_by_path(const char* name) {
+    file_table_lock_init();
+    EnterCriticalSection(&g_file_table_lock);
     int idx = find_open_file_locked(name);
-    return (idx >= 0 && g_open_files[idx].is_dir);
+    bool result = (idx >= 0 && g_open_files[idx].is_dir);
+    LeaveCriticalSection(&g_file_table_lock);
+    return result;
 }
 
 /* Check parent directory of a path exists */
 static bool parent_dir_exists(const char* path) {
     const char* slash = strrchr(path, '/');
     if (!slash) return true; /* at root → parent is root, always exists */
-    char parent[256];
     size_t plen = (size_t)(slash - path);
     if (plen == 0) return true; /* "/file" → parent is root */
+    if (plen >= 256) return false; /* parent too long */
+    char parent[256];
     strncpy(parent, path, plen);
     parent[plen] = 0;
     return is_dir_by_path(parent);
@@ -119,10 +124,12 @@ static bool is_direct_child(const wchar_t* full_path, const wchar_t* parent) {
 /* ---- FUSE operations ---- */
 
 static int raid_getattr(const char* path, struct fuse_stat* stbuf) {
+    gs_lock();
     memset(stbuf, 0, sizeof(struct fuse_stat));
     if (strcmp(path, "/") == 0) {
         stbuf->st_mode = S_IFDIR | 0755;
         stbuf->st_nlink = 2;
+        gs_unlock();
         return 0;
     }
     const char* p = strip_path(path);
@@ -135,20 +142,23 @@ static int raid_getattr(const char* path, struct fuse_stat* stbuf) {
             stbuf->st_nlink = 1;
             stbuf->st_size = (fuse_off_t)g_open_files[idx].size;
             LeaveCriticalSection(&g_file_table_lock);
+            gs_unlock();
             return 0;
         }
         LeaveCriticalSection(&g_file_table_lock);
     }
+    gs_unlock();
     return -ENOENT;
 }
 
 static int raid_readdir(const char* path, void* buf, fuse_fill_dir_t filler, fuse_off_t offset, struct fuse_file_info* fi) {
     (void)offset; (void)fi;
+    gs_lock();
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     const char* p = strip_path(path);
-    wchar_t wparent[256];
-    mbstowcs(wparent, p, 256);
+    wchar_t wparent[256] = {0};
+    if (mbstowcs(wparent, p, 256) == (size_t)-1) { gs_unlock(); return 0; }
     file_table_lock_init();
     EnterCriticalSection(&g_file_table_lock);
     for (uint32_t i = 0; i < g_open_count; i++) {
@@ -162,27 +172,31 @@ static int raid_readdir(const char* path, void* buf, fuse_fill_dir_t filler, fus
         }
     }
     LeaveCriticalSection(&g_file_table_lock);
+    gs_unlock();
     return 0;
 }
 
 static int raid_open(const char* path, struct fuse_file_info* fi) {
+    gs_lock();
     const char* p = strip_path(path);
-    if (!*p) return -ENOENT;
+    if (!*p) { gs_unlock(); return -ENOENT; }
+    if (strlen(p) > 255) { gs_unlock(); return -ENAMETOOLONG; }
     if (fi->flags & O_CREAT) {
-        if (!parent_dir_exists(p)) return -ENOENT;
+        if (!parent_dir_exists(p)) { gs_unlock(); return -ENOENT; }
         file_table_lock_init();
         EnterCriticalSection(&g_file_table_lock);
         int idx = find_or_add_file_locked(p, false);
         LeaveCriticalSection(&g_file_table_lock);
-        if (idx < 0) return -ENOSPC;
+        if (idx < 0) { gs_unlock(); return -ENOSPC; }
     } else {
         file_table_lock_init();
         EnterCriticalSection(&g_file_table_lock);
         int idx = find_open_file_locked(p);
         LeaveCriticalSection(&g_file_table_lock);
-        if (idx < 0) return -ENOENT;
+        if (idx < 0) { gs_unlock(); return -ENOENT; }
     }
     if ((fi->flags & 3) != O_RDONLY) fi->flags |= O_RDWR;
+    gs_unlock();
     return 0;
 }
 
@@ -248,7 +262,7 @@ static int raid_rename(const char* from, const char* to) {
     const char* src = strip_path(from);
     const char* dst = strip_path(to);
     if (!*src || !*dst) return -ENOENT;
-    if (strlen(dst) > 255) return -ENAMETOOLONG;
+    if (strlen(src) > 254 || strlen(dst) > 254) return -ENAMETOOLONG;
     if (!parent_dir_exists(dst)) return -ENOENT;
     file_table_lock_init();
     EnterCriticalSection(&g_file_table_lock);
@@ -257,21 +271,27 @@ static int raid_rename(const char* from, const char* to) {
     if (find_open_file_locked(dst) >= 0) { LeaveCriticalSection(&g_file_table_lock); return -EEXIST; }
     bool src_is_dir = g_open_files[idx].is_dir;
     wchar_t wsrc[256], wdst[256];
-    mbstowcs(wsrc, src, 256);
-    mbstowcs(wdst, dst, 256);
+    if (mbstowcs(wsrc, src, 256) == (size_t)-1 ||
+        mbstowcs(wdst, dst, 256) == (size_t)-1) {
+        LeaveCriticalSection(&g_file_table_lock); return -EINVAL;
+    }
     size_t slen = wcslen(wsrc);
     wcscpy(g_open_files[idx].full_path, wdst);
     if (src_is_dir) {
+        if (slen >= 255) { LeaveCriticalSection(&g_file_table_lock); return -ENAMETOOLONG; }
         wcscat(wsrc, L"/");
         for (uint32_t i = 0; i < g_open_count; i++) {
             if (i == (uint32_t)idx) continue;
             if (wcsncmp(g_open_files[i].full_path, wsrc, slen + 1) == 0) {
-                wchar_t newpath[256];
                 const wchar_t* suffix = g_open_files[i].full_path + slen + 1;
-                wcscpy(newpath, wdst);
-                wcscat(newpath, L"/");
-                wcscat(newpath, suffix);
-                wcscpy(g_open_files[i].full_path, newpath);
+                size_t wdlen = wcslen(wdst);
+                size_t suflen = wcslen(suffix);
+                if (wdlen + 1 + suflen >= 256) continue;
+                wchar_t newpath[256];
+                wcscpy_s(newpath, 256, wdst);
+                wcscat_s(newpath, 256, L"/");
+                wcscat_s(newpath, 256, suffix);
+                wcscpy_s(g_open_files[i].full_path, 256, newpath);
             }
         }
     }
@@ -405,7 +425,7 @@ static int raid_write(const char* path, const char* buf, size_t size, fuse_off_t
             if (cache_len > 0) {
                 ok = cache_write(&vol->cache, buf + total_written, curr_off, (uint32_t)cache_len);
                 if (ok) {
-                    vol->bytes_written += cache_len;
+                    InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, (LONG64)cache_len);
                     InterlockedExchangeAdd64(&g_ctx.total_bytes_consumed, (LONG64)cache_len);
                     update_highest_written((LONG64)(curr_off + cache_len));
                     total_written += cache_len;
@@ -518,6 +538,10 @@ static unsigned int __stdcall fuse_thread_func(void* arg) {
 bool fuse_mount_volume(STRIPE_VOLUME* vol, char drive_letter) {
 #ifdef USE_WINFSP
     if (!vol) return false;
+    if (!g_file_table_lock_init) {
+        InitializeCriticalSection(&g_file_table_lock);
+        g_file_table_lock_init = true;
+    }
     g_ctx.vol = vol;
     g_ctx.highest_byte_written = 0;
     g_ctx.total_bytes_freed = 0;
@@ -583,9 +607,10 @@ bool fuse_unmount_volume(char drive_letter) {
         g_fuse_thread_handle = NULL;
     }
     if (g_file_table_lock_init) {
-        DeleteCriticalSection(&g_file_table_lock);
-        g_open_count = 0;
-        g_file_table_lock_init = false;
+        /* Do NOT delete the CS here — WinFsp worker threads may still be
+           active (they outlive fuse_loop_mt). The OS reclaims the CRITICAL_SECTION
+           when the process exits. See P0-14/H6 for details. */
+        g_file_table_lock_init = false; /* mark as no longer valid */
     }
     LOG_OK("Unmounted %c:", drive_letter);
     return true;

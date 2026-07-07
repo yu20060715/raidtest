@@ -56,9 +56,7 @@ static void daemon_process_stdin(HANDLE hStdin) {
     nl = strchr(buf, '\r');
     if (nl) *nl = 0;
     if (buf[0] == 0) return;
-    gs_lock();
     cmd_process(buf);
-    gs_unlock();
 }
 
 /* ---- Load volume from superblock (single metadata source) ---- */

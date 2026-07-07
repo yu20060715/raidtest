@@ -1,12 +1,6 @@
 #include "cmd_handler.h"
 #include "raid_service.h"
-#include "disk_scanner.h"
-#include "bench_io.h"
-#include "fuse_bridge.h"
 #include "config.h"
-#include "wizard.h"
-#include "daemon.h"
-#include "cleanup.h"
 
 APP_STATE g_state = {0};
 CRITICAL_SECTION g_state_cs;
@@ -20,7 +14,7 @@ void cmd_cleanup_all(void) { raid_cleanup(); }
 void cmd_print_banner(void) {
     printf("\n");
     printf("  ==============================================\n");
-    printf("    RAIDTEST v1.0 RC2 - Asymmetric Stripe Engine\n");
+    printf("    RAIDTEST v1.0 RC4 - Asymmetric Stripe Engine\n");
     printf("    Virtual RAID 0 across mixed-speed physical disks\n");
     printf("    Supports: SATA SSD + NVMe SSD + HDD mixed arrays\n");
     printf("  ==============================================\n");
@@ -141,6 +135,7 @@ static void cmd_help(void) {
     printf("    simulate <idx> <f|h|d>       Simulate disk failure/healthy/disconnect\n");
     printf("    planner                      RAID capacity and efficiency calculator\n");
     printf("    events                       Browse event history log\n");
+    printf("    expand <disk_id:mb> ...      Expand volume by adding new disks to stripe\n");
     printf("    status                       Live status dashboard\n");
     printf("    help                         Show this help\n");
     printf("    exit                         Exit the program\n");
@@ -173,19 +168,54 @@ static const char* rc_str(RC rc) {
 
 /* ---- Command dispatcher (unchanged) ---- */
 
+void do_restore(char mount_letter) {
+    if (g_state.cfg.config.disk_count == 0) { LOG_ERROR("No config to restore"); return; }
+    LOG_INFO("Restoring from config (%u disks, mount at %c:)...", g_state.cfg.config.disk_count, mount_letter);
+    RC rc;
+    rc = raid_scan();
+    if (rc != RC_OK) { LOG_ERROR("No disks detected"); return; }
+    char id_size_buf[256];
+    int pos = 0;
+    for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++) {
+        DISK_CONFIG* dc = &g_state.cfg.config.disks[i];
+        if (dc->disk_id >= device_get_count()) {
+            LOG_ERROR("Disk %u from config not found", dc->disk_id);
+            return;
+        }
+        char dl_str[2] = { dc->drive_letter, 0 };
+        raid_mapdrive(dc->disk_id, dl_str);
+        pos += snprintf(id_size_buf + pos, (size_t)(256 - pos), "%s%u:%llu",
+                        i > 0 ? " " : "",
+                        dc->disk_id, (unsigned long long)dc->pool_mb);
+        if (pos >= 256) { LOG_ERROR("Config too large"); return; }
+    }
+    char* args[MAX_DISKS];
+    int argc = 0;
+    char* ctx = NULL;
+    char* tok = strtok_s(id_size_buf, " ", &ctx);
+    while (tok && argc < MAX_DISKS) { args[argc++] = tok; tok = strtok_s(NULL, " ", &ctx); }
+    if (argc < MIN_DISKS) { LOG_ERROR("Need at least %d disks", MIN_DISKS); return; }
+    rc = raid_init_pools(argc, args);
+    if (rc != RC_OK) { LOG_ERROR("Failed to initialize pool files"); return; }
+    rc = raid_create();
+    if (rc != RC_OK) { LOG_ERROR("Failed to create volume"); return; }
+    if (g_state.cfg.config.cache_mb > 0) {
+        char cache_str[16];
+        snprintf(cache_str, 16, "%u", g_state.cfg.config.cache_mb);
+        char* cache_av[] = { cache_str };
+        raid_cache(1, cache_av);
+    }
+    rc = raid_mount(mount_letter);
+    if (rc != RC_OK && rc != RC_ERR_ALREADY) {
+        LOG_WARN("Mount failed (rc=%d)", rc);
+    }
+}
+
 static void auto_restore_or_quick(void) {
     config_load(&g_state.cfg.config);
     if (g_state.cfg.config.disk_count > 0) {
-        LOG_INFO("Restoring from saved config...");
         raid_scan();
-        for (uint32_t i = 0; i < g_state.cfg.config.disk_count; i++) {
-            APP_CONFIG* cfg = &g_state.cfg.config;
-            if (!g_state.disk.physical_disks || !cfg || cfg->disk_count == 0) break;
-            char dl_str[2] = { cfg->disks[0].drive_letter, 0 };
-            raid_mapdrive(cfg->disks[0].disk_id, dl_str);
-            break;
-        }
-        LOG_INFO("Use 'load' to restore volume from superblock.");
+        do_restore(g_state.cfg.config.mount_letter ? g_state.cfg.config.mount_letter : 'G');
     } else {
         raid_quick();
     }
@@ -209,8 +239,7 @@ bool cmd_process(const char* input) {
     if (argc == 0) return true;
 
     RC rc = RC_OK;
-    gs_lock();
-    if (strcmp(args[0], "exit") == 0 || strcmp(args[0], "quit") == 0) { gs_unlock(); return false; }
+    if (strcmp(args[0], "exit") == 0 || strcmp(args[0], "quit") == 0) { return false; }
     else if (strcmp(args[0], "help") == 0) { cmd_help(); }
     else if (strcmp(args[0], "scan") == 0) rc = cmd_scan();
     else if (strcmp(args[0], "mapdrive") == 0) rc = cmd_mapdrive(argc - 1, args + 1);
@@ -247,20 +276,7 @@ bool cmd_process(const char* input) {
 
     if (rc != RC_OK && rc != RC_ERR_ROLLBACK)
         LOG_WARN("Command failed: %s", rc_str(rc));
-    gs_unlock();
     return true;
 }
 
-void cmd_interactive(void) {
-    cmd_print_banner();
-    LOG_INFO("Type 'help' for commands\n");
-    char input[512];
-    while (1) {
-        printf("raidtest> ");
-        fflush(stdout);
-        if (!fgets(input, sizeof(input), stdin)) break;
-        if (!cmd_process(input)) break;
-    }
-    LOG_INFO("Shutting down...");
-    gs_lock(); raid_cleanup(); gs_unlock();
-}
+

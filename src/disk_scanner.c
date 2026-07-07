@@ -41,7 +41,7 @@ bool disk_scan_all(DISK_INFO*** out_disks, uint32_t* out_count) {
         }
 
         void* new_disks = realloc(disks, (count + 1) * sizeof(DISK_INFO));
-        if (!new_disks) { CloseHandle(h); continue; }
+        if (!new_disks) { LOG_WARN("realloc failed, skipping disk %lc:", d[0]); CloseHandle(h); continue; }
         disks = (DISK_INFO*)new_disks;
         DISK_INFO* disk = &disks[count];
         memset(disk, 0, sizeof(DISK_INFO));
@@ -87,11 +87,12 @@ bool disk_scan_all(DISK_INFO*** out_disks, uint32_t* out_count) {
                 disk->total_bytes = total_bytes.QuadPart;
         }
 
-        STORAGE_ADAPTER_DESCRIPTOR adapter;
-        if (DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query), &adapter, sizeof(adapter), &bytes, NULL)) {
-            // Use adapter info for sector size
+        DISK_GEOMETRY geo;
+        if (DeviceIoControl(h, IOCTL_DISK_GET_DRIVE_GEOMETRY, NULL, 0, &geo, sizeof(geo), &bytes, NULL)) {
+            disk->sector_size = geo.BytesPerSector;
+        } else {
+            disk->sector_size = 512;
         }
-        disk->sector_size = 512;
 
         ULONG dev_num;
         DWORD ret_bytes;
@@ -122,16 +123,6 @@ void disk_scan_free(DISK_INFO** disks, uint32_t count) {
     if (!disks) return;
     for (uint32_t i = 0; i < count; i++) free(disks[i]);
     free(disks);
-}
-
-bool disk_resolve_speed(DISK_INFO* disk) {
-    if (!disk) return false;
-    switch (disk->type) {
-        case DISK_TYPE_NVME_SSD: disk->read_speed_mbs = 3500; disk->write_speed_mbs = 3000; return true;
-        case DISK_TYPE_SATA_SSD: disk->read_speed_mbs = 550; disk->write_speed_mbs = 500; return true;
-        case DISK_TYPE_HDD: disk->read_speed_mbs = 200; disk->write_speed_mbs = 150; return true;
-        default: disk->read_speed_mbs = 100; disk->write_speed_mbs = 100; return true;
-    }
 }
 
 bool disk_select(DISK_INFO** disks, uint32_t count, uint32_t* indices, uint32_t sel_count) {

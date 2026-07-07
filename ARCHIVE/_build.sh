@@ -4,7 +4,7 @@ cd "C:/Users/Yu/Desktop/raidv3"
 
 set -e
 echo "Compiling C sources..."
-for f in src/main.c src/cmd_handler.c src/config.c src/disk_scanner.c src/pool_io.c src/bench_io.c src/stripe_engine.c src/mirror_engine.c src/ram_cache.c src/fuse_bridge.c src/wizard.c src/daemon.c src/cleanup.c src/superblock.c src/journal.c src/logger.c src/event_bus.c src/device_manager.c src/metadata_manager.c src/planner_engine.c src/volume_manager.c src/storage_common.c src/raid_service.c src/ui_model.c src/profiler.c; do
+for f in src/main.c src/cmd_handler.c src/config.c src/disk_scanner.c src/pool_io.c src/bench_io.c src/stripe_engine.c src/mirror_engine.c src/ram_cache.c src/fuse_bridge.c src/wizard.c src/daemon.c src/cleanup.c src/superblock.c src/journal.c src/logger.c src/event_bus.c src/device_manager.c src/metadata_manager.c src/planner_engine.c src/volume_manager.c src/storage_common.c src/raid_service.c src/raid_query.c src/crc32.c src/uuid.c src/ui_model.c src/profiler.c; do
   base=$(basename "$f" .c)
   echo "  CC $base"
   gcc -Wall -O2 -DUSE_WINFSP -Iwinfsp_headers/winfsp-2.1/inc -Iwinfsp_headers/winfsp-2.1/inc/fuse -Isrc -c "$f" -o "build/$base.o"

@@ -60,6 +60,12 @@ typedef enum {
     STATE_UNMOUNTED     = 6,
 } RAID_STATE;
 
+static inline uint64_t get_filetime_now(void) {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    return ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+}
+
 static inline const char* raid_state_str(RAID_STATE s) {
     switch (s) {
         case STATE_DISCONNECTED: return "DISCONNECTED";
@@ -122,50 +128,15 @@ static inline RC validate_pool_size(uint64_t size_bytes) {
 }
 
 #define CHECK_HANDLE(h, label) do { if (!(h)) { LOG_ERROR("Handle allocation failed"); goto label; } } while(0)
+#define CHECK_DISKS(vol) do { \
+    if (!(vol)) { LOG_ERROR("NULL volume"); return false; } \
+    for (uint32_t _di = 0; _di < (vol)->disk_count; _di++) { \
+        if (!(vol)->disks[_di]) { LOG_ERROR("NULL disk at index %u", _di); return false; } \
+    } \
+} while(0)
 
-#pragma pack(push, 1)
-typedef struct {
-    uint64_t high;
-    uint64_t low;
-} VOLUME_UUID;
-#pragma pack(pop)
-
-static inline void uuid_generate(VOLUME_UUID* uuid) {
-    LARGE_INTEGER pc;
-    QueryPerformanceCounter(&pc);
-    uuid->high = ((uint64_t)GetCurrentProcessId() << 32) | ((uint32_t)(GetTickCount64() & 0xFFFFFFFF));
-    uuid->low = (uint64_t)pc.QuadPart;
-    if (uuid->high == 0) uuid->high = 1;
-    if (uuid->low == 0) uuid->low = 1;
-}
-
-static inline void uuid_to_str(const VOLUME_UUID* uuid, char* out, size_t out_size) {
-    snprintf(out, out_size, "%016llX-%016llX",
-             (unsigned long long)uuid->high,
-             (unsigned long long)uuid->low);
-}
-
-static inline bool uuid_is_zero(const VOLUME_UUID* uuid) {
-    return uuid->high == 0 && uuid->low == 0;
-}
-
-static inline bool uuid_eq(const VOLUME_UUID* a, const VOLUME_UUID* b) {
-    return a->high == b->high && a->low == b->low;
-}
-
-static inline uint32_t crc32(const uint8_t* data, size_t len) {
-    uint32_t table[256];
-    for (uint32_t i = 0; i < 256; i++) {
-        uint32_t crc = i;
-        for (uint32_t j = 0; j < 8; j++)
-            crc = (crc >> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
-        table[i] = crc;
-    }
-    uint32_t crc = 0xFFFFFFFF;
-    for (size_t i = 0; i < len; i++)
-        crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    return crc ^ 0xFFFFFFFF;
-}
+#include "uuid.h"
+#include "crc32.h"
 
 typedef enum {
     DISK_TYPE_UNKNOWN = 0,
@@ -285,6 +256,7 @@ typedef struct {
     DISK_CONFIG disks[MAX_DISKS];
     uint32_t   disk_count;
     uint32_t   cache_mb;
+    uint32_t   pool_mb;
     char       mount_letter;
     bool       auto_bench;
     int        theme;

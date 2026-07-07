@@ -9,8 +9,22 @@
 
 void cleanup_volume_cache(STRIPE_VOLUME* vol) {
     if (!vol->cache_enabled) return;
-    vol->cache.running = 0;
+    /* Signal flush thread to stop */
+    InterlockedExchange(&vol->cache.running, 0);
+    /* Wait for flush thread to finish its current cycle and exit.
+       This eliminates the re-entrancy race where cleanup_volume_cache's
+       cache_flush_all call would be skipped because the flush thread
+       is already inside cache_flush_all. */
+    if (vol->cache.flush_thread) {
+        WaitForSingleObject(vol->cache.flush_thread, INFINITE);
+        CloseHandle(vol->cache.flush_thread);
+        vol->cache.flush_thread = NULL;
+    }
+    /* No re-entrancy race: flush thread is done, so cache_flush_all runs.
+       Flush any remaining dirty data to disk. */
     cache_flush_all(&vol->cache, vol);
+    /* Destroy cache resources — flush_thread handle is NULL so cache_destroy
+       skips the WaitForSingleObject/CloseHandle internally. */
     cache_destroy(&vol->cache);
     vol->cache_enabled = false;
 }
@@ -71,46 +85,6 @@ void cleanup_pool_session(APP_STATE* state) {
     }
 }
 
-static void cleanup_scan_all_drives(void) {
-    for (wchar_t letter = L'A'; letter <= L'Z'; letter++) {
-        wchar_t root[4] = { letter, L':', L'\\', 0 };
-        if (GetDriveTypeW(root) != DRIVE_FIXED) continue;
-        wchar_t pool_path[MAX_DRIVE_PATH];
-        StringCchPrintfW(pool_path, MAX_DRIVE_PATH, L"%c:\\RAIDTEST\\stripe_pool.dat", letter);
-        if (DeleteFileW(pool_path)) {
-            char path_a[MAX_DRIVE_PATH] = {0};
-            wcstombs(path_a, pool_path, MAX_DRIVE_PATH - 1);
-            LOG_INFO("Deleted pool file: %s", path_a);
-        }
-        wchar_t dir_path[MAX_DRIVE_PATH];
-        StringCchPrintfW(dir_path, MAX_DRIVE_PATH, L"%c:\\RAIDTEST", letter);
-        if (RemoveDirectoryW(dir_path)) {
-            char dir_a[MAX_DRIVE_PATH] = {0};
-            wcstombs(dir_a, dir_path, MAX_DRIVE_PATH - 1);
-            LOG_INFO("Removed directory: %s", dir_a);
-        }
-        StringCchPrintfW(pool_path, MAX_DRIVE_PATH, L"%c:\\RAIDTEST1-0\\stripe_pool.dat", letter);
-        if (DeleteFileW(pool_path)) {
-            char path_a[MAX_DRIVE_PATH] = {0};
-            wcstombs(path_a, pool_path, MAX_DRIVE_PATH - 1);
-            LOG_INFO("Deleted legacy pool file: %s", path_a);
-        }
-        wchar_t bench_path[MAX_DRIVE_PATH];
-        StringCchPrintfW(bench_path, MAX_DRIVE_PATH, L"%c:\\RAIDTEST_BENCH\\raid_bench.tmp", letter);
-        if (DeleteFileW(bench_path)) {
-            char path_a[MAX_DRIVE_PATH] = {0};
-            wcstombs(path_a, bench_path, MAX_DRIVE_PATH - 1);
-            LOG_INFO("Deleted bench file: %s", path_a);
-        }
-        StringCchPrintfW(bench_path, MAX_DRIVE_PATH, L"%c:\\RAIDTEST_BENCH", letter);
-        if (RemoveDirectoryW(bench_path)) {
-            char dir_a[MAX_DRIVE_PATH] = {0};
-            wcstombs(dir_a, bench_path, MAX_DRIVE_PATH - 1);
-            LOG_INFO("Removed bench directory: %s", dir_a);
-        }
-    }
-}
-
 void cleanup_bench_dirs(void) {
     for (wchar_t letter = L'A'; letter <= L'Z'; letter++) {
         wchar_t root[4] = { letter, L':', L'\\', 0 };
@@ -135,7 +109,7 @@ void cleanup_all(void) {
     APP_STATE* state = &g_state;
     cleanup_session(state);
 
-    cleanup_scan_all_drives();
+    cleanup_pool_session(state);
 
     wchar_t config_path[MAX_DRIVE_PATH];
     config_get_path(config_path, MAX_DRIVE_PATH);

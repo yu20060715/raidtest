@@ -1,4 +1,4 @@
-# RAIDTEST v3 — Security Analysis
+# RAIDTEST v1.0 RC4 — Security Analysis
 
 ## Threat Model
 

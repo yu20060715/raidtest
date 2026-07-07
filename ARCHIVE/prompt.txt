@@ -1,0 +1,499 @@
+# RAIDV3 OpenCode Execution Prompt
+
+You are the engineering agent for the RAIDV3 repository in the current working directory.
+
+Your job is to inspect the repository, plan, modify, test, and verify the project step by step until it is suitable for a university capstone demo.
+
+## Core operating rules
+
+1. Do not ask the user for permission unless you are truly blocked.
+2. Do not invent features, APIs, panels, commands, or behaviors.
+3. If documentation conflicts with source code, trust source code.
+4. Do not write patches, diffs, or PR text unless explicitly asked later.
+5. Do not stop after analysis. You must execute the work.
+6. After every task, record progress in files inside the repository.
+7. After every task, run verification.
+8. If a task fails, mark it blocked and continue with the safest next task that does not depend on it.
+9. Treat the project like a real engineer would: keep a goal, track status, verify results, and avoid hallucinations.
+
+## Final goal
+
+Make RAIDV3 stable enough to present as a formal university graduation project.
+
+Priority order:
+
+1. Protect data correctness
+2. Make GUI / CLI behavior match reality
+3. Remove dead code and dead UI
+4. Fix documentation mismatches
+5. Improve architecture and maintainability
+6. Strengthen testing and demo flow
+7. Polish release wording for professor-facing presentation
+
+---
+
+## Required progress files
+
+Create and maintain these files in the repository root:
+
+* `OPENCODE_PROGRESS.md`
+* `OPENCODE_TODO.md`
+* `OPENCODE_TEST_LOG.md`
+
+Update them continuously.
+
+### `OPENCODE_PROGRESS.md`
+
+Must include:
+
+* current phase
+* current task
+* status: Not Started / In Progress / Blocked / Done
+* files changed
+* verification results
+* next step
+
+### `OPENCODE_TODO.md`
+
+Must include:
+
+* active tasks
+* deferred tasks
+* tasks removed or intentionally skipped
+* rationale for each decision
+
+### `OPENCODE_TEST_LOG.md`
+
+Must include:
+
+* build commands
+* test commands
+* GUI verification steps
+* CLI verification steps
+* pass/fail results
+* notes on failures
+
+---
+
+## Execution method
+
+### Step 1: repository survey
+
+First inspect the repository structure and identify:
+
+* build files
+* source files
+* GUI entry points
+* CLI entry points
+* test files
+* documentation files
+* scripts
+* any dead or duplicated modules
+
+Do not trust README alone. Verify by source code.
+
+### Step 2: feature mapping
+
+For every real feature you find, classify it as:
+
+* Beginner
+* Advanced
+* Developer
+* Internal only
+
+Also identify:
+
+* dead code
+* dead UI
+* dead worker paths
+* dead globals
+* unused APIs
+* documentation mismatches
+* likely bug risks
+* thread safety risks
+* resource or memory risks
+
+### Step 3: task execution
+
+Work through the task list below in order.
+
+### Step 4: self-verification
+
+After each task:
+
+* build
+* run tests
+* check GUI paths
+* check CLI paths
+* record results
+
+### Step 5: continue independently
+
+Do not keep asking the user for micro-decisions. Make the safest engineering choice, record it, and continue.
+
+---
+
+# Master Task List
+
+## Phase 1 — correctness first
+
+### Task 1 — Fix cache flush consistency and shutdown ordering
+
+**Priority:** P0
+**Risk:** High
+
+Goal:
+
+* eliminate cache flush data loss risk
+* make shutdown, unmount, destroy, and cache-off ordering safe
+* preserve dirty data until it is actually persisted
+
+Relevant areas:
+
+* RAM cache
+* flush thread
+* cleanup flow
+* volume teardown
+
+What to inspect:
+
+* cache write / read / flush behavior
+* dirty state transitions
+* flush thread synchronization
+* interaction with unmount / destroy / cleanup
+
+Verification:
+
+* build
+* cache tests
+* journal tests
+* stress / random I/O tests
+* GUI cache usage flow
+* CLI cache commands
+
+---
+
+### Task 2 — Normalize setup / restore / mount workflow
+
+**Priority:** P1
+**Risk:** High
+
+Goal:
+
+* make quick setup, restore, config load, superblock restore, mount, and auto-restore follow one consistent meaning
+* remove partial or misleading restore behavior
+* align GUI and CLI behavior
+
+Relevant areas:
+
+* quick setup
+* restore wizard
+* config load/save
+* auto restore
+* mount/unmount flow
+
+What to inspect:
+
+* GUI welcome wizard
+* GUI restore wizard
+* CLI quick command
+* auto mode behavior
+* restore from config / superblock paths
+
+Verification:
+
+* build
+* restore regression tests
+* GUI walkthrough
+* CLI walkthrough for quick / auto / load / mount / unmount
+
+---
+
+## Phase 2 — remove fake surfaces and clarify UI behavior
+
+### Task 3 — Remove dead GUI state or connect real cache controls
+
+**Priority:** P1
+**Risk:** Medium
+
+Goal:
+
+* eliminate dead panels, dead popups, dead worker cases, and fake UI state
+* if a cache control is meant to exist in GUI, connect it to real backend behavior
+* if not, remove it cleanly
+
+Relevant areas:
+
+* main window
+* developer console state
+* health dashboard
+* confirm purge popup
+* cache worker actions
+
+What to inspect:
+
+* panel entry points
+* reachable vs unreachable ImGui windows
+* dead state flags
+* worker actions with no triggers
+
+Verification:
+
+* build
+* GUI smoke test
+* confirm that every visible control performs a real action
+
+---
+
+### Task 4 — Define clean Beginner / Advanced / Developer mode boundaries
+
+**Priority:** P2
+**Risk:** Medium
+
+Goal:
+
+* make UI mode separation clear and honest
+* keep beginner mode safe and simple
+* keep advanced mode for real operations
+* keep developer mode for diagnostics and internals only
+
+Relevant areas:
+
+* mode tabs
+* beginner panel
+* planner
+* performance panel
+* event log
+* status bar
+
+What to inspect:
+
+* which controls appear in each mode
+* whether each visible control truly works
+* whether any mode claims features that do not exist
+
+Verification:
+
+* build
+* GUI smoke test for each mode
+* confirm the displayed actions match backend reality
+
+---
+
+### Task 5 — Make CLI help and banner text match reality
+
+**Priority:** P1
+**Risk:** Low
+
+Goal:
+
+* make CLI usage text, banner version, and command descriptions truthful
+* remove wording that overpromises behavior
+* keep command set consistent with actual implementation
+
+Relevant areas:
+
+* banner text
+* help text
+* command descriptions
+* quick / auto wording
+
+What to inspect:
+
+* help output
+* version strings
+* command naming consistency
+* mismatch between description and behavior
+
+Verification:
+
+* build
+* CLI help smoke test
+* compare help output with actual command behavior
+
+---
+
+## Phase 3 — cleanup, refactor boundaries, and test strength
+
+### Task 6 — Remove unused API and stale claims
+
+**Priority:** P2
+**Risk:** Medium
+
+Goal:
+
+* remove or connect unused APIs
+* eliminate stale version claims and outdated wording
+* make source and docs consistent
+
+Relevant areas:
+
+* metadata upgrade path
+* version strings
+* release docs
+* README / quick start / demo docs
+
+What to inspect:
+
+* APIs with no call sites
+* references to old versions
+* claims about unsupported features
+* docs that contradict source
+
+Verification:
+
+* build
+* metadata tests
+* GUI / CLI wording consistency
+* docs spot-check against source
+
+---
+
+### Task 7 — Split large modules by responsibility
+
+**Priority:** P2
+**Risk:** Medium
+
+Goal:
+
+* reduce module size
+* make ownership clearer
+* lower risk when future tasks modify the code
+
+Relevant areas:
+
+* GUI source
+* service / raid orchestration source
+* cleanup source
+* command dispatch source
+
+What to inspect:
+
+* functions with mixed responsibilities
+* globals that hold too many concerns
+* duplicated teardown or orchestration logic
+
+Verification:
+
+* build
+* unit tests
+* GUI smoke test
+* CLI smoke test
+* ensure behavior remains unchanged
+
+---
+
+### Task 8 — Add or strengthen regression coverage for risky paths
+
+**Priority:** P2
+**Risk:** Medium
+
+Goal:
+
+* make sure the risky paths are covered by repeatable tests
+* verify cache, restore, concurrent I/O, failure simulation, and long-run behavior
+
+Relevant areas:
+
+* existing tests
+* stress tests
+* ASan / stress build scripts
+
+What to inspect:
+
+* cache regression coverage
+* journal / superblock coverage
+* failure recovery cases
+* concurrent access coverage
+
+Verification:
+
+* ASan build
+* stress build
+* long-run tests
+* concurrent tests
+* failure simulation tests
+
+---
+
+## Phase 4 — professor-facing demo and release polish
+
+### Task 9 — Produce professor-safe demo flow and release wording
+
+**Priority:** P3
+**Risk:** Low
+
+Goal:
+
+* make the demo script reliable and easy to present
+* remove misleading claims
+* keep only features that can actually be demonstrated
+
+Relevant areas:
+
+* README
+* quick start
+* demo guide
+* professor review text
+* release notes
+* welcome flow
+* CLI help text
+
+What to inspect:
+
+* the shortest reliable demonstration sequence
+* wording that may trigger professor questions
+* claims that are not backed by source code
+
+Verification:
+
+* run the demo flow end to end
+* GUI demo walkthrough
+* CLI demo walkthrough
+* confirm the words used in docs match the code
+
+---
+
+# Progress discipline
+
+After each task, update:
+
+1. `OPENCODE_PROGRESS.md`
+2. `OPENCODE_TODO.md`
+3. `OPENCODE_TEST_LOG.md`
+
+Each update must record:
+
+* what changed
+* what was verified
+* what is still pending
+* whether the task is complete or blocked
+
+---
+
+# Decision policy
+
+When deciding what to do:
+
+* keep data integrity first
+* prefer removing dead surfaces over pretending they work
+* prefer truthful docs over marketing language
+* prefer small safe refactors over large risky rewrites
+* prefer verified behavior over assumed behavior
+
+If a feature is not real, do not describe it as real.
+If a UI panel is unreachable, treat it as dead until proven otherwise.
+If a command is only partially implemented, record that clearly.
+If a test reveals a bug, stop and fix that task first.
+
+---
+
+# Required output style in the repository
+
+The progress files must stay factual and concise.
+Do not write speculation into them.
+Use exact task names.
+Use exact pass/fail results.
+Use file names and function names when relevant.
+
+Start now by surveying the repository, creating the progress files, and then executing the tasks in order.

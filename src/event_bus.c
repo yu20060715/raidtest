@@ -10,7 +10,7 @@ typedef struct {
 
 static Subscriber g_subs[EVENT_COUNT][MAX_SUBSCRIBERS_PER_EVENT];
 static CRITICAL_SECTION g_eb_cs;
-static bool g_eb_inited = false;
+static volatile LONG g_eb_inited = 0;
 
 static const char* g_names[EVENT_COUNT] = {
     "DISK_FOUND", "DISK_REMOVED", "DISK_BENCHED",
@@ -25,10 +25,9 @@ const char* event_type_str(EVENT_TYPE type) {
 }
 
 void event_bus_init(void) {
-    if (g_eb_inited) return;
+    if (InterlockedExchange(&g_eb_inited, 1)) return;
     InitializeCriticalSection(&g_eb_cs);
     memset(g_subs, 0, sizeof(g_subs));
-    g_eb_inited = true;
 }
 
 void event_bus_subscribe(EVENT_TYPE type, event_callback cb, void* userdata) {
@@ -65,9 +64,7 @@ void event_bus_publish(EVENT_TYPE type, const char* data) {
     for (int i = 0; i < MAX_SUBSCRIBERS_PER_EVENT; i++) {
         if (g_subs[type][i].active) {
             Subscriber s = g_subs[type][i];
-            LeaveCriticalSection(&g_eb_cs);
             s.cb(type, data, s.userdata);
-            EnterCriticalSection(&g_eb_cs);
         }
     }
     LeaveCriticalSection(&g_eb_cs);

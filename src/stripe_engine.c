@@ -315,6 +315,7 @@ bool stripe_volume_expand(STRIPE_VOLUME* vol, DISK_INFO** new_disks, uint32_t ne
 
 void stripe_volume_destroy(STRIPE_VOLUME* vol) {
     if (!vol) return;
+    if (!vol->disks) return;
     for (uint32_t i = 0; i < vol->disk_count; i++) {
         if (vol->disks[i]->handle != INVALID_HANDLE_VALUE) {
             CloseHandle(vol->disks[i]->handle);
@@ -327,9 +328,9 @@ bool stripe_volume_map_lba(const STRIPE_VOLUME* vol, uint64_t virtual_offset,
                             IO_MAPPING_ENTRY* entries, uint32_t* out_count, uint32_t request_length) {
     if (!vol || !entries || !out_count || request_length == 0) return false;
     if (virtual_offset >= vol->virtual_total_bytes) return false;
-    uint32_t remaining = request_length;
+    uint64_t remaining = request_length;
     if (virtual_offset + remaining > vol->virtual_total_bytes)
-        remaining = (uint32_t)(vol->virtual_total_bytes - virtual_offset);
+        remaining = vol->virtual_total_bytes - virtual_offset;
 
     uint64_t current_vo = virtual_offset;
     uint32_t entry_idx = 0;
@@ -412,17 +413,18 @@ bool stripe_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offse
     uint32_t ps = 0;
     if (!vol || !buffer || length == 0) return false;
     if (virtual_offset + length > vol->virtual_total_bytes) return false;
+    CHECK_DISKS(vol);
     profiler_read_begin(&ps);
     if (vol->raid_level == RAID_LEVEL_MIRROR) {
         bool ok = mirror_volume_read(vol, buffer, virtual_offset, length);
-        if (ok) vol->bytes_read += length;
+        if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
         profiler_read_end(ps, ok ? length : 0);
         return ok;
     }
     if (vol->cache_enabled && !vol->cache_flush_in_progress &&
         virtual_offset + length <= vol->cache.cache_size_bytes) {
         bool ok = cache_read(&vol->cache, buffer, virtual_offset, length);
-        if (ok) vol->bytes_read += length;
+        if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
         profiler_read_end(ps, ok ? length : 0);
         return ok;
     }
@@ -480,7 +482,7 @@ bool stripe_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offse
         CloseHandle(events[i]);
     }
 
-    vol->bytes_read += ok ? length : 0;
+    InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, ok ? length : 0);
     profiler_read_end(ps, ok ? length : 0);
     return ok;
 }
@@ -489,10 +491,11 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
     uint32_t ps = 0;
     if (!vol || !buffer || length == 0) return false;
     if (virtual_offset + length > vol->virtual_total_bytes) return false;
+    CHECK_DISKS(vol);
     profiler_write_begin(&ps);
     if (vol->raid_level == RAID_LEVEL_MIRROR) {
         bool ok = mirror_volume_write(vol, buffer, virtual_offset, length);
-        if (ok) vol->bytes_written += length;
+        if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, length);
         profiler_write_end(ps, ok ? length : 0);
         return ok;
     }
@@ -551,7 +554,7 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
         } else {
             ok = cache_write(&vol->cache, buffer, virtual_offset, length);
         }
-        if (ok) vol->bytes_written += length;
+        if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, length);
         profiler_write_end(ps, ok ? length : 0);
         return ok;
     }
@@ -610,7 +613,7 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
         CloseHandle(events[i]);
     }
 
-    vol->bytes_written += ok ? length : 0;
+    InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, ok ? length : 0);
     profiler_write_end(ps, ok ? length : 0);
     return ok;
 }

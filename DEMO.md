@@ -1,25 +1,25 @@
-# RAIDTEST v1.0 RC1 — Demo Walkthrough
+# RAIDTEST v1.0 RC4 — Demo Walkthrough
 
-> **Target time:** 8–10 minutes  
-> **Prerequisites:** Windows 10/11, WinFsp installed, Administrator privileges  
+> **Target time:** 8–10 minutes
+> **Prerequisites:** Windows 10/11, WinFsp installed, Administrator privileges
 
 ---
 
 ## Step 1: Launch
 
-**Action:** Double-click `raidtest.exe` (or run `raidtest.exe --gui` from an Admin terminal)
+**Action:** Double-click `raidtest.exe` (or run from an Admin terminal)
 
-**Expected screen:**  
-- Dark-themed GUI window, maximized (~1280×800)
-- Title bar: `RAIDTEST v1.0 RC1 — GUI Edition`
+**Expected screen:**
+- Dark-themed GUI window, maximized
+- Mode tabs: Beginner | **Advanced** | Developer (Advanced selected)
+- Top toolbar: Scan, Create, Mirror, Mount, Unmount, Destroy, Bench buttons
 - Left panel: Physical Disks table (empty: "0 disk(s)")
 - Right panel: Volume Info (shows "No volume — Scan + Create first")
 - Bottom: Event Log (empty), Status Bar ("Ready — 0 disk(s) detected")
 
-**If failure:**  
+**If failure:**
 - "Failed to create DirectX 11 device": GPU/driver too old (try updating GPU drivers)
 - "Failed to create window": another instance may be running
-- Blank window / immediate exit: check Windows Event Viewer
 
 ---
 
@@ -27,48 +27,26 @@
 
 **Action:** Click **Scan** button (top toolbar)
 
-**Expected screen:**  
+**Expected screen:**
 - Status bar shows yellow `[Scanning disks...]` with progress bar
 - Event Log: `[INFO] Scan: OK (2 disk(s) found)`
 - Physical Disks table populates with detected drives:
-  - **Model**, **ID**, **Serial**, **Type**, **Bus**, **Size**, **Speed**, **Status**
-- Disk names appear (e.g., "NVMe SSD 1TB", "SATA SSD 512GB")
+  - Model, ID, Serial, Type, Bus, Size, Speed, Status
+- Planner panel (below disk table) activates
 - Status changes to "Ready — 2 disk(s) detected"
-- State indicator: `SCAN_DONE`
 
-**If failure:**  
+**If failure:**
 - "Scan: FAILED": run as Administrator (physical disk access denied)
-- "0 disk(s) found": no physical disks detected (check disk connections)
-- WinFsp error: WinFsp not installed (install from https://winfsp.dev/rel/)
 
 ---
 
-## Step 3: Select Disks
+## Step 3: Create RAID0 Volume
 
-**Action:** Check the **Use** checkbox for two disks (far-right column)
-
-**Expected screen:**  
-- Selected count updates: `"2 disk(s) | 2 selected | Total: X.X GB"`
-- Planner panel (below disk table) activates:
-  - Shows selected disk count
-  - **RAID0 capacity**, **RAID1 capacity**, **RAID10 capacity**
-  - Efficiency percentages for each level
-- Checked disks show "Yes" in the **RAID** column
-
-**If failure:**  
-- Planner shows "Select 2+ disks": need to select at least 2 disks
-- Planner shows wrong capacity: disks may have bad sectors (check Status column)
-- Cannot check checkbox: run as Administrator
-
----
-
-## Step 4: Create RAID0
-
-**Action:**  
-- Ensure Cache input shows `1024` (1 GB write-back cache)
+**Action:**
+- Ensure at least 2 disks are checked in the **Use** column (far right)
 - Click **Create**
 
-**Expected screen:**  
+**Expected screen:**
 - Status bar: yellow `[Creating volume...]` with progress bar
 - Event Log: `[INFO] Create: OK — Volume is ready for mount`
 - Right panel (Volume Info) populates:
@@ -79,114 +57,92 @@
   - Mounted: `No`
   - Cache: `ON (1024 MB)`
   - UUID: 36-character hex string
-  - Generation: `1`
 
-**If failure:**  
+**If failure:**
 - "Create: FAILED": disk selection problem (try Rescan)
-- Progress bar stuck: check Event Log for specific error
-- App crash: check disk health (Status column should show "Online")
 
 ---
 
-## Step 5: Mount Volume
+## Step 4: Mount Volume
 
-**Action:**  
-- Drv input shows `G` (default mount letter)
-- Click **Mount**
+**Action:** Click **Mount**
 
-**Expected screen:**  
+**Expected screen:**
 - Status bar: yellow `[Mounting volume...]`
 - Event Log: `[OK] Mount: OK — Volume mounted at G:`
 - Volume Info updates:
   - State: `MOUNTED`
   - Mounted: `Yes` (green text)
   - Uptime: `00:00:0X` (live counter)
-- Health: `X/X healthy` (green)
-- **Mount** button becomes disabled; **Unmount** button becomes enabled
+- **Mount** button becomes disabled; **Unmount** button enabled
 
-**If failure:**  
+**If failure:**
 - "Mount: FAILED": WinFsp not installed or another process holds G:
-- "Mount: FAILED": check if G: already in use (change mount letter)
-- WinFsp permission error: run as Administrator
 
 ---
 
-## Step 6: Explorer Verification
+## Step 5: Explorer Verification
 
 **Action:** Open Windows File Explorer → navigate to `G:\`
 
-**Expected screen:**  
+**Expected screen:**
 - `G:\` appears as a local disk in "This PC"
 - Volume label: `RAIDTEST`
 - Capacity shows the RAID0 combined size
 - You can create folders, copy files, edit documents
 
-**If failure:**  
-- `G:\` not visible: refresh Explorer (F5) or wait 5 seconds
-- "Access denied": volume may be mounted but not ready (check Event Log)
-- Wrong capacity: check Volume Info panel vs Explorer properties
-
 ---
 
-## Step 7: Create Test File
+## Step 6: Create Test File
 
 **Action:** In Explorer: right-click `G:\` → New → Text Document → name it `test.txt`
 → Open it, type "RAIDTEST demo!", save, close
 
-**Expected screen:**  
+**Expected screen:**
 - File appears in `G:\` with content preserved
-- Volume Info panel updates:
-  - Written: `~0 MB` (bytes written counter increments)
-  - Read: `0 MB` (no read from our action)
-- Can also try: copy a small photo/video to `G:\`, play it directly from the mounted volume
-
-**If failure:**  
-- File disappears / can't save: volume may be read-only (check Volume Info)
-- Very slow write: cache flushing (normal for first write)
-- Error "The file is too large": FAT32 limitation (use NTFS — WinFsp default)
+- Volume Info panel: Written counter increments
 
 ---
 
-## Step 8: Unmount
+## Step 7: Unmount
 
 **Action:** Click **Unmount**
 
-**Expected screen:**  
+**Expected screen:**
 - Status bar: yellow `[Unmounting...]`
 - Event Log: `[OK] Unmount: OK — Volume unmounted`
-- Volume Info updates:
-  - State: `UNMOUNTED`
-  - Mounted: `No`
-  - Uptime: shows last uptime before unmount
-- `G:\` disappears from Explorer (may take 2-3 seconds)
+- Volume Info: State → `UNMOUNTED`, Mounted → `No`
+- `G:\` disappears from Explorer
 - **Mount** button becomes enabled; **Unmount** becomes disabled
 
-**If failure:**  
-- "Unmount: FAILED": file handles open on G:\ (close all Explorer windows to G:\)
-- "Unmount: FAILED — Volume in use": another process has open files
-- Can't unmount: try closing all programs accessing G:\ first
+**If failure:**
+- "Unmount: FAILED": file handles open on G:\ (close all Explorer windows)
 
 ---
 
-## Step 9: Load (Restore from Metadata)
+## Step 8: Restore (Load from Saved Config)
 
-**Action:**  
+**Action:**
 - Click **Scan** (to re-detect disks)
-- Click **Create** again (the `load` happens automatically on create when metadata exists)
+- From the **Actions** menu (top-left), select **Restore**
+- In the dialog, choose **From Saved Config**
 
-> **What it demonstrates:** The volume is restored using serial-number matching.
-> Even if the disks were disconnected and reconnected, the UUID and serial
-> mapping in the superblock ensures the correct disks are assembled.
-
-**Expected screen:**  
-- Volume Info shows the same UUID as before
+**Expected screen:**
+- Volume Info shows the same UUID and capacity as before
 - State: `UNMOUNTED` (ready to mount again)
-- Generation may increment (shows it was reloaded)
 
-**If failure:**  
-- Volume UUID differs: wrong disks selected (check selected disks match original)
-- "Load: FAILED — Disk mismatch": serial numbers don't match (superblock on disk corrupted)
-- No volume after load: metadata may have been destroyed (re-create)
+**What it demonstrates:** The volume configuration was saved to disk.
+Even after unmount, the UUID and disk mapping are preserved and restored.
+
+---
+
+## Step 9: Re-mount & Verify
+
+**Action:** Click **Mount**
+
+**Expected screen:**
+- Volume mounts at `G:` again
+- Open `G:\test.txt` in Explorer — the file content is preserved from Step 6
 
 ---
 
@@ -194,61 +150,54 @@
 
 **Action:** Click **Destroy**
 
-**Expected screen:**  
+**Expected screen:**
 - **Confirmation Dialog** appears (centered modal):
   - "Are you sure you want to DESTROY the volume?"
-  - "This will delete ALL data on the volume."
-  - "This action CANNOT be undone."
   - [Yes, Destroy] [Cancel]
 
 **Action:** Click **Yes, Destroy**
 
-**Expected screen:**  
+**Expected screen:**
 - Status bar: yellow `[Destroying volume...]`
 - Event Log: `[INFO] Destroy: OK — Volume destroyed`
 - Volume Info resets: "No volume — Scan + Create first"
 - Pool files deleted from disk
-- State: `SCAN_DONE` (disks still detected, but no volume)
-
-**Alternative:** Click **Cancel** → dialog closes, nothing happens (safety confirmed)
-
-**If failure:**  
-- "Destroy: FAILED": pool file locked by another process
-- Pool files remain on disk: check `C:\RAIDTEST\` for orphaned files
-- Destroy succeeded but data still accessible: WinFsp cache delay (run Scan)
 
 ---
 
 ## Quick Reference
 
 ```
-┌─────────────┬──────────────────────┬──────────────────────────┐
-│ Step        │ Button / Action      │ Key Indicator            │
-├─────────────┼──────────────────────┼──────────────────────────┤
-│ 1. Launch   │ Double-click exe     │ Dark GUI, empty tables   │
-│ 2. Scan     │ [Scan]               │ Disks appear in list     │
-│ 3. Select   │ Checkboxes (Use)     │ Planner shows capacities │
-│ 4. Create   │ [Create]             │ Volume Info populated    │
-│ 5. Mount    │ [Mount]              │ G:\ appears in Explorer  │
-│ 6. Explorer │ Navigate to G:\      │ Files work normally      │
-│ 7. File     │ Create test.txt      │ Write counter increases  │
-│ 8. Unmount  │ [Unmount]            │ G:\ disappears           │
-│ 9. Load     │ [Scan] + [Create]    │ Same UUID restored       │
-│ 10. Destroy │ [Destroy] → Confirm  │ Volume Info clears       │
-└─────────────┴──────────────────────┴──────────────────────────┘
+ Step         | Button / Action        | Key Indicator
+--------------+------------------------+-----------------------------
+ 1. Launch    | Double-click exe       | Dark GUI, empty tables
+ 2. Scan      | [Scan]                 | Disks appear in list
+ 3. Create    | [Create]               | Volume Info populated
+ 4. Mount     | [Mount]                | G:\ appears in Explorer
+ 5. Explorer  | Navigate to G:\        | Files work normally
+ 6. File      | Create test.txt        | Write counter increases
+ 7. Unmount   | [Unmount]              | G:\ disappears
+ 8. Restore   | Actions → Restore      | Same UUID restored
+ 9. Re-mount  | [Mount]                | File content preserved
+ 10. Destroy  | [Destroy] → Confirm    | Volume Info clears
 ```
+
+## Beginner Mode Alternative
+
+Switch to **Beginner** mode (top tabs) for simplified one-click operations:
+1. **Quick Setup** — scan + create + cache + mount all-in-one
+2. **Restore Volume** — restore from saved config
+3. **Unmount / Benchmark** — available when volume is mounted
 
 ## CLI Alternative
 
-If GUI is unavailable, all steps work via CLI:
-
+All steps work via CLI:
 ```
-raidtest.exe scan
-raidtest.exe init 0:1024 1:1024
-raidtest.exe create
-raidtest.exe mount G
-rem ... use G:\ in Explorer ...
-raidtest.exe unmount
-raidtest.exe load
-raidtest.exe destroy
+raidtest.exe --cli
+scan
+init 0:1024 1:1024
+create
+mount G
+unmount
+destroy
 ```
