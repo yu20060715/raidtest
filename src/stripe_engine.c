@@ -66,6 +66,7 @@ bool stripe_volume_normalize_ratios(uint32_t* speeds, uint32_t count, uint32_t* 
 bool stripe_volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count, uint32_t stripe_unit) {
     if (!vol || !disks || disk_count < MIN_DISKS || disk_count > MAX_DISKS) return false;
     memset(vol, 0, sizeof(STRIPE_VOLUME));
+    vol->raid_level = RAID_LEVEL_STRIPE;
     vol->disk_count = disk_count;
     vol->stripe_unit = stripe_unit;
 
@@ -446,7 +447,7 @@ bool stripe_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offse
         if (!evt) {
             LOG_ERROR("CreateEventW failed at disk %u (read)", entries[i].disk_index);
             for (uint32_t j = 0; j < i; j++) {
-                CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
+                if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
                 CloseHandle(events[j]);
             }
             profiler_read_end(ps, 0);
@@ -463,7 +464,7 @@ bool stripe_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offse
                 LOG_ERROR("Read failed on disk %u (async)", entries[i].disk_index);
                 CloseHandle(evt);
                 for (uint32_t j = 0; j < i; j++) {
-                    CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
+                    if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
                     CloseHandle(events[j]);
                 }
                 profiler_read_end(ps, 0);
@@ -577,7 +578,7 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
         if (!evt) {
             LOG_ERROR("CreateEventW failed at disk %u (write)", entries[i].disk_index);
             for (uint32_t j = 0; j < i; j++) {
-                CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
+                if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
                 CloseHandle(events[j]);
             }
             profiler_write_end(ps, 0);
@@ -594,7 +595,7 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
                 LOG_ERROR("Write failed on disk %u (async)", entries[i].disk_index);
                 CloseHandle(evt);
                 for (uint32_t j = 0; j < i; j++) {
-                    CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
+                    if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
                     CloseHandle(events[j]);
                 }
                 profiler_write_end(ps, 0);

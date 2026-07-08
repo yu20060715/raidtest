@@ -1109,6 +1109,7 @@ static void ShowDiskList(void) {
         ImGui::TableSetupColumn("Use",    ImGuiTableColumnFlags_WidthFixed, 32);
         ImGui::TableHeadersRow();
         g_gui.selected_count = 0;
+        bool selection_changed = false;
         for (uint32_t i = 0; i < count && i < 64; i++) {
             DISK_INFO* d = device_get(i);
             if (!d) continue;
@@ -1138,14 +1139,19 @@ static void ShowDiskList(void) {
             bool checked = !!g_gui.disk_checked[i];
             if (ImGui::Checkbox(cbid, &checked)) {
                 g_gui.disk_checked[i] = checked ? 1 : 0;
-                if (!g_gui.worker_running) {
-                    uint32_t idx = (uint32_t)i;
-                    device_select(&idx, 1);
-                    refresh_ui_model();
-                }
+                selection_changed = true;
             }
             if (checked && g_gui.selected_count < 8)
                 g_gui.selected_disks[g_gui.selected_count++] = (int)i;
+        }
+        if (selection_changed && !g_gui.worker_running) {
+            uint32_t indices[64];
+            uint32_t n = 0;
+            for (uint32_t i = 0; i < count && i < 64; i++) {
+                if (g_gui.disk_checked[i]) indices[n++] = i;
+            }
+            device_select(indices, n);
+            refresh_ui_model();
         }
         ImGui::EndTable();
     }

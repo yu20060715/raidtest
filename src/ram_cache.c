@@ -20,6 +20,7 @@ bool cache_init(RAM_CACHE* cache, uint64_t size_bytes) {
     cache->hit_count = 0;
     cache->miss_count = 0;
     cache->running = 1;
+    cache->thread_stop = 0;
     cache->flush_thread = NULL;
     cache->write_through = 0;
     cache->flush_buffer = (uint8_t*)VirtualAlloc(NULL, MAX_FLUSH_SIZE, MEM_COMMIT, PAGE_READWRITE);
@@ -37,6 +38,7 @@ bool cache_init(RAM_CACHE* cache, uint64_t size_bytes) {
 void cache_destroy(RAM_CACHE* cache) {
     if (!cache || !cache->buffer) return;
     InterlockedExchange(&cache->running, 0);
+    InterlockedExchange(&cache->thread_stop, 1);
     if (cache->flush_thread) {
         WaitForSingleObject(cache->flush_thread, INFINITE);
         CloseHandle(cache->flush_thread);
@@ -82,6 +84,20 @@ bool cache_read(RAM_CACHE* cache, void* data, uint64_t offset, uint32_t length) 
     cache->hit_count++;
     LeaveCriticalSection(&cache->lock);
     return true;
+}
+
+void cache_invalidate(RAM_CACHE* cache, uint64_t offset, uint32_t length) {
+    if (!cache || !cache->buffer) return;
+    uint64_t end = offset + length;
+    if (length == 0 || end > cache->cache_size_bytes) return;
+    EnterCriticalSection(&cache->lock);
+    uint64_t start_block = offset / cache->block_size;
+    uint64_t end_block = (end + cache->block_size - 1) / cache->block_size;
+    for (uint64_t b = start_block; b < end_block && b < cache->block_count; b++) {
+        cache->valid_map[b / 8] &= ~(1 << (b % 8));
+        cache->dirty_map[b / 8] &= ~(1 << (b % 8));
+    }
+    LeaveCriticalSection(&cache->lock);
 }
 
 void cache_flush_all(RAM_CACHE* cache, STRIPE_VOLUME* vol) {
@@ -234,7 +250,7 @@ unsigned int __stdcall cache_flush_thread(void* arg) {
     if (!arg) return 1;
     STRIPE_VOLUME* vol = (STRIPE_VOLUME*)arg;
     RAM_CACHE* cache = &vol->cache;
-    while (cache->running) {
+    while (!cache->thread_stop) {
         uint32_t dirty_count = 0;
         EnterCriticalSection(&cache->lock);
         for (uint32_t b = 0; b < cache->block_count; b++) {
@@ -252,7 +268,7 @@ unsigned int __stdcall cache_flush_thread(void* arg) {
         }
 
         Sleep(sleep_ms);
-        if (cache->running) cache_flush_all(cache, vol);
+        if (!cache->thread_stop) cache_flush_all(cache, vol);
     }
     return 0;
 }

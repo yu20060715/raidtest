@@ -38,9 +38,10 @@ static CRITICAL_SECTION g_file_table_lock;
 static bool g_file_table_lock_init = false;
 
 static void file_table_lock_init(void) {
-    /* Must be called from single-threaded context (fuse_mount_volume),
-       which initializes g_file_table_lock once. This is a no-op stub
-       to keep call sites unchanged. */
+    if (!g_file_table_lock_init) {
+        InitializeCriticalSection(&g_file_table_lock);
+        g_file_table_lock_init = true;
+    }
 }
 
 /* Strip leading '/' */
@@ -538,10 +539,6 @@ static unsigned int __stdcall fuse_thread_func(void* arg) {
 bool fuse_mount_volume(STRIPE_VOLUME* vol, char drive_letter) {
 #ifdef USE_WINFSP
     if (!vol) return false;
-    if (!g_file_table_lock_init) {
-        InitializeCriticalSection(&g_file_table_lock);
-        g_file_table_lock_init = true;
-    }
     g_ctx.vol = vol;
     g_ctx.highest_byte_written = 0;
     g_ctx.total_bytes_freed = 0;

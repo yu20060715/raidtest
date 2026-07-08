@@ -111,6 +111,7 @@ bool mirror_volume_write(STRIPE_VOLUME* vol, const void* buffer,
         bool ok = cache_write(&vol->cache, buffer, virtual_offset, length);
         if (ok && vol->cache.write_through) {
             if (!mirror_write_to_all(vol, buffer, virtual_offset, length)) {
+                cache_invalidate(&vol->cache, virtual_offset, length);
                 ok = false;
             }
         }
@@ -161,11 +162,14 @@ bool mirror_volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO* replacement, uint32_t 
             LOG_ERROR("Rebuild: write failed at offset %llu", (unsigned long long)offset);
             ok = false; break;
         }
-        if (!FlushFileBuffers(replacement->handle)) {
-            LOG_ERROR("Rebuild: flush failed at offset %llu", (unsigned long long)offset);
-            ok = false; break;
-        }
         offset += chunk;
+    }
+
+    if (ok) {
+        if (!FlushFileBuffers(replacement->handle)) {
+            LOG_ERROR("Rebuild: final flush failed");
+            ok = false;
+        }
     }
 
     VirtualFree(buf, 0, MEM_RELEASE);

@@ -10,7 +10,7 @@
 void cleanup_volume_cache(STRIPE_VOLUME* vol) {
     if (!vol->cache_enabled) return;
     /* Signal flush thread to stop */
-    InterlockedExchange(&vol->cache.running, 0);
+    InterlockedExchange(&vol->cache.thread_stop, 1);
     /* Wait for flush thread to finish its current cycle and exit.
        This eliminates the re-entrancy race where cleanup_volume_cache's
        cache_flush_all call would be skipped because the flush thread

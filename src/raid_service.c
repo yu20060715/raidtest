@@ -627,7 +627,7 @@ RC raid_config_save_locked(void) {
         if (d && d->selected && cfg->disk_count < MAX_DISKS) {
             cfg->disks[cfg->disk_count].disk_id = i;
             cfg->disks[cfg->disk_count].drive_letter = (char)d->drive_letter[0];
-            cfg->disks[cfg->disk_count].pool_mb = d->pool_bytes / (1024 * 1024);
+            cfg->disks[cfg->disk_count].pool_mb = (d->pool_bytes + (1024 * 1024 - 1)) / (1024 * 1024);
             cfg->disk_count++;
         }
     }

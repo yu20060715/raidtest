@@ -214,6 +214,7 @@ typedef struct {
     uint64_t  miss_count;
     HANDLE    flush_thread;
     volatile LONG running;
+    volatile LONG thread_stop;
     CRITICAL_SECTION lock;
     uint8_t*  flush_buffer;
     uint32_t  flush_buffer_size;
