@@ -143,12 +143,24 @@ bool mirror_volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO* replacement, uint32_t 
         return false;
     }
 
+    /* Disable old disk: save original state, mark unhealthy, update count.
+       Concurrent mirror I/O skips the old disk because it checks healthy. */
+    DISK_INFO* old_disk = vol->disks[replace_idx];
+    LONG old_was_healthy = InterlockedExchange(&old_disk->healthy, 0);
+    if (old_was_healthy)
+        InterlockedDecrement(&vol->healthy_count);
+
     LOG_INFO("Rebuild: reading from disk %u, writing to disk %u (%llu MB total)",
              src_idx, replace_idx, (unsigned long long)(total / (1024 * 1024)));
 
     uint8_t* buf = (uint8_t*)VirtualAlloc(NULL, (size_t)min_u64(total, 64ULL * 1024 * 1024),
                                           MEM_COMMIT, PAGE_READWRITE);
-    if (!buf) { LOG_ERROR("Rebuild: VirtualAlloc failed"); return false; }
+    if (!buf) {
+        InterlockedExchange(&old_disk->healthy, old_was_healthy);
+        if (old_was_healthy) InterlockedIncrement(&vol->healthy_count);
+        LOG_ERROR("Rebuild: VirtualAlloc failed");
+        return false;
+    }
 
     bool ok = true;
     uint64_t offset = 0;
@@ -179,6 +191,9 @@ bool mirror_volume_rebuild(STRIPE_VOLUME* vol, DISK_INFO* replacement, uint32_t 
         InterlockedExchange(&replacement->healthy, 1);
         InterlockedIncrement(&vol->healthy_count);
         LOG_OK("Rebuild complete: disk %u replaced", replace_idx);
+    } else {
+        InterlockedExchange(&old_disk->healthy, old_was_healthy);
+        if (old_was_healthy) InterlockedIncrement(&vol->healthy_count);
     }
     return ok;
 }

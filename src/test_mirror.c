@@ -173,9 +173,125 @@ static bool test_mirror_cache_integration(void) {
     return true;
 }
 
+static bool test_mirror_rebuild_with_concurrent_write(void) {
+    DISK_INFO* d0 = test_disk_create(16ULL * 1024 * 1024, 200);
+    DISK_INFO* d1 = test_disk_create(16ULL * 1024 * 1024, 200);
+    DISK_INFO* disks[] = {d0, d1};
+    STRIPE_VOLUME vol;
+    ASSERT(mirror_volume_create(&vol, disks, 2), "create failed");
+
+    /* Write initial data */
+    uint32_t test_size = 1024 * 1024;
+    uint8_t* wbuf = (uint8_t*)VirtualAlloc(NULL, test_size, MEM_COMMIT, PAGE_READWRITE);
+    ASSERT(wbuf, "alloc failed");
+    test_fill_pattern(wbuf, test_size, 0);
+    ASSERT(stripe_volume_write(&vol, wbuf, 0, test_size), "initial write failed");
+
+    /* Simulate: concurrent write happens after old disk is disabled (by B3 fix)
+       but before rebuild completes. The write goes only to remaining healthy disk. */
+    InterlockedExchange(&d0->healthy, 0);
+    InterlockedExchange(&vol.healthy_count, 1);
+    uint32_t extra_size = 4096;
+    uint8_t* extra = (uint8_t*)VirtualAlloc(NULL, extra_size, MEM_COMMIT, PAGE_READWRITE);
+    ASSERT(extra, "alloc failed");
+    test_fill_pattern(extra, extra_size, 0xFF);
+    ASSERT(mirror_volume_write(&vol, extra, test_size, extra_size), "concurrent write failed");
+
+    /* Now rebuild disk 0 */
+    DISK_INFO* replacement = test_disk_create(16ULL * 1024 * 1024, 300);
+    ASSERT(mirror_volume_rebuild(&vol, replacement, 0), "rebuild failed");
+
+    /* Verify: replacement has all data (initial + concurrent write) */
+    uint8_t* rbuf = (uint8_t*)VirtualAlloc(NULL, test_size + extra_size, MEM_COMMIT, PAGE_READWRITE);
+    ASSERT(rbuf, "alloc failed");
+    ASSERT(stripe_read_raw(replacement, rbuf, 0, test_size), "read initial data from replacement failed");
+    ASSERT(memcmp(wbuf, rbuf, test_size) == 0, "initial data mismatch on replacement");
+    ASSERT(stripe_read_raw(replacement, rbuf, test_size, extra_size), "read extra data from replacement failed");
+    ASSERT(memcmp(extra, rbuf, extra_size) == 0, "concurrent write data mismatch on replacement");
+
+    VirtualFree(wbuf, 0, MEM_RELEASE);
+    VirtualFree(extra, 0, MEM_RELEASE);
+    VirtualFree(rbuf, 0, MEM_RELEASE);
+    stripe_volume_destroy(&vol);
+    test_disk_destroy(d0);
+    test_disk_destroy(d1);
+    test_disk_destroy(replacement);
+    printf("  PASS: mirror_rebuild_with_concurrent_write\n");
+    return true;
+}
+
+static bool test_mirror_rebuild_failure_rollback(void) {
+    DISK_INFO* d0 = test_disk_create(16ULL * 1024 * 1024, 200);
+    DISK_INFO* d1 = test_disk_create(16ULL * 1024 * 1024, 200);
+    DISK_INFO* disks[] = {d0, d1};
+    STRIPE_VOLUME vol;
+    ASSERT(mirror_volume_create(&vol, disks, 2), "create failed");
+
+    uint32_t test_size = 4096;
+    uint8_t* wbuf = (uint8_t*)VirtualAlloc(NULL, test_size, MEM_COMMIT, PAGE_READWRITE);
+    ASSERT(wbuf, "alloc failed");
+    test_fill_pattern(wbuf, test_size, 0);
+    ASSERT(stripe_volume_write(&vol, wbuf, 0, test_size), "write failed");
+    VirtualFree(wbuf, 0, MEM_RELEASE);
+
+    /* Create replacement and mark it faulty to trigger write failure */
+    DISK_INFO* replacement = test_disk_create(16ULL * 1024 * 1024, 200);
+    replacement->faulty = 1;
+    uint32_t initial_healthy = (uint32_t)vol.healthy_count;
+
+    ASSERT(!mirror_volume_rebuild(&vol, replacement, 0), "rebuild should have failed");
+
+    /* Rollback verification: old disk restored to healthy */
+    ASSERT(InterlockedCompareExchange(&d0->healthy, 1, 1) == 1,
+           "old disk should be healthy after rollback");
+    ASSERT_EQ(vol.healthy_count, initial_healthy, "healthy_count should be restored after rollback");
+    ASSERT(vol.disks[0] == d0, "disks[0] should still point to old disk after failed rebuild");
+
+    replacement->faulty = 0;
+    test_disk_destroy(replacement);
+
+    stripe_volume_destroy(&vol);
+    test_disk_destroy(d0);
+    test_disk_destroy(d1);
+    printf("  PASS: mirror_rebuild_failure_rollback\n");
+    return true;
+}
+
+static bool test_mirror_rebuild_healthy_count(void) {
+    DISK_INFO* d0 = test_disk_create(16ULL * 1024 * 1024, 200);
+    DISK_INFO* d1 = test_disk_create(16ULL * 1024 * 1024, 200);
+    DISK_INFO* d2 = test_disk_create(16ULL * 1024 * 1024, 200);
+    DISK_INFO* disks[] = {d0, d1, d2};
+    STRIPE_VOLUME vol;
+    ASSERT(mirror_volume_create(&vol, disks, 3), "create failed");
+    ASSERT_EQ(vol.healthy_count, 3, "initial healthy_count should be 3");
+
+    /* Mark disk 0 unhealthy (simulates pre-existing failure) */
+    InterlockedExchange(&d0->healthy, 0);
+    InterlockedExchange(&vol.healthy_count, 2);
+
+    DISK_INFO* replacement = test_disk_create(16ULL * 1024 * 1024, 200);
+    ASSERT(mirror_volume_rebuild(&vol, replacement, 0), "rebuild failed");
+
+    /* After rebuild: replacement replaces d0, so healthy_count = d1 + d2 + replacement = 3 */
+    ASSERT_EQ(vol.healthy_count, 3, "healthy_count should be 3 after rebuild");
+    ASSERT(vol.disks[0] == replacement, "disks[0] should point to replacement");
+
+    stripe_volume_destroy(&vol);
+    test_disk_destroy(d0);
+    test_disk_destroy(d1);
+    test_disk_destroy(d2);
+    test_disk_destroy(replacement);
+    printf("  PASS: mirror_rebuild_healthy_count\n");
+    return true;
+}
+
 TEST(mirror_create_2disks)            { return test_mirror_create_2disks(); }
 TEST(mirror_degraded_read)            { return test_mirror_degraded_read(); }
 TEST(mirror_all_dead_read_fails)      { return test_mirror_all_dead_read_fails(); }
 TEST(mirror_write_to_all)             { return test_mirror_write_to_all(); }
 TEST(mirror_rebuild)                  { return test_mirror_rebuild(); }
 TEST(mirror_cache_integration)        { return test_mirror_cache_integration(); }
+TEST(mirror_rebuild_with_concurrent_write) { return test_mirror_rebuild_with_concurrent_write(); }
+TEST(mirror_rebuild_failure_rollback)      { return test_mirror_rebuild_failure_rollback(); }
+TEST(mirror_rebuild_healthy_count)         { return test_mirror_rebuild_healthy_count(); }
