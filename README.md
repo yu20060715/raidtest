@@ -3,7 +3,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue)]()
 [![GUI](https://img.shields.io/badge/GUI-Dear%20ImGui%20%2B%20DirectX%2011-green)]()
 [![API](https://img.shields.io/badge/Mount-WinFsp%20FUSE-orange)]()
-[![Status](https://img.shields.io/badge/Status-RC4-yellow)]()
+[![Status](https://img.shields.io/badge/Status-RC5-yellow)]()
 
 **RAIDTEST** is a Windows-native software RAID prototype that creates, mounts, and manages virtual RAID volumes from physical disks or pool files. Originally a CLI tool, it now includes a full graphical interface built with Dear ImGui and DirectX 11.
 
@@ -204,15 +204,15 @@ See [DEMO.md](DEMO.md) for a complete step-by-step demo:
 
 ## Tests
 
-### 39 Test Scenarios (All Passing)
+### 42 Test Scenarios (All Passing)
 
 | Suite | Tests | Area |
 |-------|-------|------|
 | Superblock | 11 | Read/write/restore/backward compat/corruption |
 | Cache | 8 | Write-back, flush, dirty block, cross-block |
-| Journal | 4 | Write-ahead log, replay, recovery |
-| Mirror Engine | 6 | RAID1 create/degraded/rebuild |
-| Stripe Engine | 8 | RAID0 create/normalize/expand/cache+expand |
+| Journal | 5 | Write-ahead log, replay, recovery, corrupted payload |
+| Mirror Engine | 9 | RAID1 create/degraded/rebuild/concurrent write |
+| Stripe Engine | 9 | RAID0 create/normalize/expand/cache+expand + normalization |
 
 ```batch
 raidtest_tests.exe
