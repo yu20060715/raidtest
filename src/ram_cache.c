@@ -15,7 +15,7 @@ bool cache_init(RAM_CACHE* cache, uint64_t size_bytes) {
     if (!cache->dirty_map) { VirtualFree(cache->buffer, 0, MEM_RELEASE); cache->buffer = NULL; return false; }
     memset(cache->dirty_map, 0, bitmap_bytes);
     cache->valid_map = (uint8_t*)malloc(bitmap_bytes);
-    if (!cache->valid_map) { free(cache->dirty_map); VirtualFree(cache->buffer, 0, MEM_RELEASE); return false; }
+    if (!cache->valid_map) { free(cache->dirty_map); cache->dirty_map = NULL; VirtualFree(cache->buffer, 0, MEM_RELEASE); cache->buffer = NULL; return false; }
     memset(cache->valid_map, 0, bitmap_bytes);
     cache->hit_count = 0;
     cache->miss_count = 0;
