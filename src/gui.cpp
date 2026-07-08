@@ -3,7 +3,6 @@
 #include "raid_service.h"
 #include "ui_model.h"
 #include "device_manager.h"
-#include "planner_engine.h"
 #include "event_bus.h"
 #include "profiler.h"
 #include "cmd_handler.h"
@@ -680,43 +679,6 @@ static void check_worker_done(void) {
     }
 }
 
-static void SetupDarkTheme(void) {
-    ImGui::StyleColorsDark();
-    ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 0.0f; s.ChildRounding = 0.0f;
-    s.FrameRounding = 3.0f; s.PopupRounding = 3.0f;
-    s.ScrollbarRounding = 3.0f; s.GrabRounding = 3.0f; s.TabRounding = 3.0f;
-    s.WindowBorderSize = 0.0f; s.ChildBorderSize = 0.0f;
-    s.FrameBorderSize = 0.0f; s.PopupBorderSize = 1.0f;
-    ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]          = ImVec4(0.08f,0.08f,0.10f,1.00f);
-    c[ImGuiCol_ChildBg]           = ImVec4(0.10f,0.10f,0.12f,1.00f);
-    c[ImGuiCol_PopupBg]           = ImVec4(0.10f,0.10f,0.12f,0.94f);
-    c[ImGuiCol_FrameBg]           = ImVec4(0.15f,0.15f,0.18f,1.00f);
-    c[ImGuiCol_FrameBgHovered]    = ImVec4(0.20f,0.20f,0.25f,1.00f);
-    c[ImGuiCol_FrameBgActive]     = ImVec4(0.25f,0.25f,0.30f,1.00f);
-    c[ImGuiCol_TitleBg]           = ImVec4(0.06f,0.06f,0.08f,1.00f);
-    c[ImGuiCol_TitleBgActive]     = ImVec4(0.10f,0.10f,0.14f,1.00f);
-    c[ImGuiCol_MenuBarBg]         = ImVec4(0.10f,0.10f,0.12f,1.00f);
-    c[ImGuiCol_Header]            = ImVec4(0.20f,0.20f,0.28f,1.00f);
-    c[ImGuiCol_HeaderHovered]     = ImVec4(0.28f,0.28f,0.38f,1.00f);
-    c[ImGuiCol_HeaderActive]      = ImVec4(0.35f,0.35f,0.45f,1.00f);
-    c[ImGuiCol_Button]            = ImVec4(0.18f,0.18f,0.22f,1.00f);
-    c[ImGuiCol_ButtonHovered]     = ImVec4(0.28f,0.30f,0.40f,1.00f);
-    c[ImGuiCol_ButtonActive]      = ImVec4(0.35f,0.38f,0.50f,1.00f);
-    c[ImGuiCol_Tab]               = ImVec4(0.12f,0.12f,0.16f,1.00f);
-    c[ImGuiCol_TabHovered]        = ImVec4(0.22f,0.24f,0.34f,1.00f);
-    c[ImGuiCol_TabSelected]       = ImVec4(0.18f,0.22f,0.30f,1.00f);
-    c[ImGuiCol_ScrollbarGrab]     = ImVec4(0.30f,0.30f,0.40f,1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.40f,0.40f,0.50f,1.00f);
-    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.50f,0.50f,0.60f,1.00f);
-    c[ImGuiCol_CheckMark]         = ImVec4(0.30f,0.70f,0.40f,1.00f);
-    c[ImGuiCol_SliderGrab]        = ImVec4(0.30f,0.50f,0.80f,1.00f);
-    c[ImGuiCol_SliderGrabActive]  = ImVec4(0.40f,0.60f,0.90f,1.00f);
-    c[ImGuiCol_PlotHistogram]     = ImVec4(0.35f,0.60f,0.90f,1.00f);
-    c[ImGuiCol_TextSelectedBg]    = ImVec4(0.25f,0.40f,0.65f,1.00f);
-}
-
 static void SetupLightTheme(void) {
     ImGui::StyleColorsLight();
     ImGuiStyle& s = ImGui::GetStyle();
@@ -726,8 +688,7 @@ static void SetupLightTheme(void) {
 }
 
 static void ApplyTheme(void) {
-    if (g_gui.use_light_theme) SetupLightTheme();
-    else SetupDarkTheme();
+    SetupLightTheme();
 }
 
 static bool CreateRenderTarget(void) {
@@ -843,102 +804,6 @@ static void ShowSettings(bool* open) {
     ImGui::End();
 }
 
-static void ShowHealthDashboard(void) {
-    ImGui::Begin("Health Dashboard", NULL, ImGuiWindowFlags_NoCollapse);
-    if (g_gui.state_value == 0) { ImGui::TextDisabled("No disks scanned."); ImGui::End(); return; }
-    uint32_t count = device_get_count();
-    UI_HEALTH_SUMMARY* h = &g_gui.health;
-    ImGui::Text("Overall: "); ImGui::SameLine();
-    if (h->total_count > 0 && !h->degraded)
-        ImGui::TextColored(ImVec4(0,1,0,1), "%u/%u healthy", h->healthy_count, h->total_count);
-    else if (h->degraded)
-        ImGui::TextColored(ImVec4(1,1,0,1), "%u/%u DEGRADED", h->healthy_count, h->total_count);
-    else ImGui::TextDisabled("N/A");
-    if (g_gui.vol_info.mounted && g_gui.state_value >= 2) {
-        ImGui::SameLine(); if (ImGui::Button("Run Full Check", ImVec2(120, 20))) start_worker(W_CHECK, NULL);
-    }
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 4));
-    int cards_per_row = 4;
-    float avail_w = ImGui::GetContentRegionAvail().x;
-    float card_w = (avail_w - 16) / cards_per_row;
-    ImGui::Columns(cards_per_row, NULL, false);
-    for (uint32_t i = 0; i < count; i++) {
-        DISK_INFO* d = device_get(i); if (!d) continue;
-        if (i > 0) ImGui::NextColumn();
-        char modelA[128] = {0}; wcstombs(modelA, d->model, 127);
-        uint32_t speed = d->benchmarked ? d->bench_write_mbs : d->write_speed_mbs;
-        bool is_healthy = d->healthy && !d->faulty;
-        char cid[32]; snprintf(cid, 32, "##card_%u", i);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, is_healthy ? ImVec4(0.12f,0.18f,0.12f,1.0f) : ImVec4(0.20f,0.10f,0.10f,1.0f));
-        ImGui::BeginChild(cid, ImVec2(card_w - 4, 128), true);
-        ImGui::Text("%s", modelA);
-        ImGui::Separator();
-        ImGui::Text("Status: "); ImGui::SameLine();
-        if (is_healthy) ImGui::TextColored(ImVec4(0,1,0,1), "Online");
-        else ImGui::TextColored(ImVec4(1,0,0,1), "Offline");
-        ImGui::Text("Capacity: %.0f GB", (double)d->total_bytes / 1e9);
-        ImGui::Text("Read: %u MB/s  Write: %u MB/s",
-            d->benchmarked ? d->bench_read_mbs : d->read_speed_mbs, speed);
-        ImGui::Text("Temp: N/A  SMART: N/A");
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-    }
-    ImGui::Columns(1);
-    ImGui::End();
-}
-
-static void ShowPerformanceDashboard(void) {
-    ImGui::Begin("Performance Dashboard", NULL, ImGuiWindowFlags_NoCollapse);
-    UI_VOLUME_INFO* vi = &g_gui.vol_info;
-    IO_PROFILER* p = profiler_get();
-    if (!vi->mounted) { ImGui::TextDisabled("Mount a volume to see live performance data."); ImGui::End(); return; }
-    double now = ImGui::GetTime();
-    if (now - g_gui.perf_last_sample > 1.0) {
-        g_gui.perf_last_sample = now;
-        struct PerfSample* s = &g_gui.perf_history[g_gui.perf_index % PERF_HISTORY];
-        s->read_mbs = (float)p->avg_read_mbs;
-        s->write_mbs = (float)p->avg_write_mbs;
-        s->latency_ms = (float)((p->avg_read_latency_ms + p->avg_write_latency_ms) / 2.0);
-        g_gui.perf_index++;
-    }
-    int count = g_gui.perf_index < PERF_HISTORY ? g_gui.perf_index : PERF_HISTORY;
-    float* r_vals = (float*)calloc((size_t)count, sizeof(float));
-    float* w_vals = (float*)calloc((size_t)count, sizeof(float));
-    float* lat_vals = (float*)calloc((size_t)count, sizeof(float));
-    if (!r_vals || !w_vals || !lat_vals) { free(r_vals); free(w_vals); free(lat_vals); ImGui::End(); return; }
-    int start = g_gui.perf_index < PERF_HISTORY ? 0 : g_gui.perf_index % PERF_HISTORY;
-    for (int i = 0; i < count; i++) {
-        int idx = (start + i) % PERF_HISTORY;
-        r_vals[i] = g_gui.perf_history[idx].read_mbs;
-        w_vals[i] = g_gui.perf_history[idx].write_mbs;
-        lat_vals[i] = g_gui.perf_history[idx].latency_ms;
-    }
-    ImGui::Columns(2, NULL, false);
-    ImGui::Text("R/W Throughput (MB/s)"); ImGui::NextColumn();
-    ImGui::Text("IOPS"); ImGui::NextColumn();
-    ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.3f,0.7f,1.0f,1.0f));
-    ImGui::PlotLines("##r", r_vals, count, 0, NULL, 0, 100, ImVec2(0, 60));
-    ImGui::PopStyleColor();
-    ImGui::NextColumn();
-    ImGui::Text("IOPS: R=%.0f W=%.0f", p->avg_iops_read, p->avg_iops_write);
-    ImGui::NextColumn();
-    ImGui::Text("Latency (ms)"); ImGui::NextColumn();
-    ImGui::Text("Cache Hit %%"); ImGui::NextColumn();
-    ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(1.0f,0.9f,0.3f,1.0f));
-    ImGui::PlotLines("##lat", lat_vals, count, 0, NULL, 0, 10, ImVec2(0, 60));
-    ImGui::PopStyleColor();
-    ImGui::NextColumn();
-    ImGui::Text("Cache: N/A");
-    ImGui::Columns(1);
-    ImGui::Separator();
-    ImGui::Text("Current: R=%.1f W=%.1f MB/s | Lat=%.2f ms | R IOPS=%.0f W IOPS=%.0f",
-        p->avg_read_mbs, p->avg_write_mbs,
-        (p->avg_read_latency_ms + p->avg_write_latency_ms) / 2.0,
-        p->avg_iops_read, p->avg_iops_write);
-    free(r_vals); free(w_vals); free(lat_vals);
-    ImGui::End();
-}
 
 static void ShowAbout(bool* open) {
     if (!ImGui::Begin("About RAIDTEST", open, ImGuiWindowFlags_AlwaysAutoResize)) return ImGui::End();
@@ -1011,31 +876,24 @@ static void ShowWelcomeWizard(void) {
 }
 
 static void ShowModeTabs(void) {
-    ImGui::Begin("##modetabs", NULL,
-        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
-    float w = ImGui::GetContentRegionAvail().x;
-    float tw = w / 3.0f;
+    const char* labels[] = { "  Beginner  ", "  Advanced  ", "  Developer  " };
     for (int i = 0; i < 3; i++) {
-        if (i > 0) ImGui::SameLine();
-        const char* labels[] = { "  Beginner  ", "  Advanced  ", "  Developer  " };
+        if (i > 0) ImGui::SameLine(0, 0);
         bool active = (g_gui.mode == i);
         if (active) {
-            ImVec4 activeCol = ImVec4(0.20f, 0.45f, 0.70f, 1.0f);
-            ImGui::PushStyleColor(ImGuiCol_Button, activeCol);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, activeCol);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, activeCol);
+            ImVec4 ac = ImVec4(0.20f, 0.45f, 0.70f, 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, ac);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ac);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ac);
         }
-        if (ImGui::Button(labels[i], ImVec2(tw - 4, 24))) g_gui.mode = (GUIMode)i;
+        if (ImGui::Button(labels[i], ImVec2(0, 22))) g_gui.mode = (GUIMode)i;
         if (active) ImGui::PopStyleColor(3);
+        if (i < 2) ImGui::SameLine(0, 0);
     }
-    ImGui::End();
 }
 
 static void ShowToolbar(void) {
-    ImGui::Begin("Toolbar", NULL,
-        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
+    ImGui::BeginChild("##tb_content", ImVec2(0, 0), false);
     float w = ImGui::GetContentRegionAvail().x;
     float bw = w * 0.075f;
     bool busy = btn_disabled();
@@ -1084,11 +942,10 @@ static void ShowToolbar(void) {
         start_worker(W_BENCHFS, m);
     }
     if (!benchable) ImGui::EndDisabled();
-    ImGui::End();
+    ImGui::EndChild();
 }
 
 static void ShowDiskList(void) {
-    ImGui::Begin("Physical Disks", NULL, ImGuiWindowFlags_NoCollapse);
     uint32_t count = device_get_count();
     float txt = (float)ImGui::GetContentRegionAvail().y - 4;
     ImGui::Text("%u disk(s) | %u selected | Total: %.1f GB | State: %s",
@@ -1155,61 +1012,20 @@ static void ShowDiskList(void) {
         }
         ImGui::EndTable();
     }
-    ImGui::End();
 }
 
-static void ShowPlanner(void) {
-    ImGui::Begin("Planner", NULL, ImGuiWindowFlags_NoCollapse);
-    if (g_gui.selected_count >= 2) {
-        PLANNER_DISK pdisks[8] = {0};
-        for (int i = 0; i < g_gui.selected_count && i < 8; i++) {
-            DISK_INFO* d = device_get(g_gui.selected_disks[i]);
-            if (!d) continue;
-            pdisks[i].disk_index = g_gui.selected_disks[i];
-            pdisks[i].capacity_bytes = d->pool_bytes > 0 ? d->pool_bytes : d->total_bytes;
-            pdisks[i].speed_mbs = d->benchmarked ? d->bench_write_mbs : d->write_speed_mbs;
-            pdisks[i].selected = true;
-            snprintf(pdisks[i].serial, MAX_SERIAL_LEN, "%s", d->serial_number);
-        }
-        PLANNER_RESULT pr = {0};
-        planner_calculate(pdisks, (uint32_t)g_gui.selected_count, &pr);
-        ImGui::Columns(2, NULL, false);
-        ImGui::Text("Selected disks:"); ImGui::NextColumn();
-        ImGui::Text("%u", pr.selected_count); ImGui::NextColumn();
-        ImGui::Text("Total raw:"); ImGui::NextColumn();
-        ImGui::Text("%llu MB (%llu GB)", pr.total_raw_mb, pr.total_raw_mb / 1024); ImGui::NextColumn();
-        ImGui::Text("RAID0 capacity:"); ImGui::NextColumn();
-        ImGui::Text("%llu MB (%llu GB)", pr.raid0_capacity_mb, pr.raid0_capacity_mb / 1024); ImGui::NextColumn();
-        ImGui::Text("RAID1 capacity:"); ImGui::NextColumn();
-        if (pr.raid1_capacity_mb > 0) ImGui::Text("%llu MB (%llu GB)", pr.raid1_capacity_mb, pr.raid1_capacity_mb / 1024);
-        else ImGui::TextDisabled("N/A (needs 2n)");
-        ImGui::NextColumn();
-        ImGui::Text("RAID10 capacity:"); ImGui::NextColumn();
-        if (pr.raid10_capacity_mb > 0) ImGui::Text("%llu MB (%llu GB)", pr.raid10_capacity_mb, pr.raid10_capacity_mb / 1024);
-        else ImGui::TextDisabled("N/A (needs 2n)");
-        ImGui::NextColumn();
-        ImGui::Text("Efficiency R0:"); ImGui::NextColumn();
-        ImGui::Text("%.1f%%", pr.efficiency_raid0 * 100.0); ImGui::NextColumn();
-        ImGui::Text("Efficiency R1:"); ImGui::NextColumn();
-        ImGui::Text("%.1f%%", pr.efficiency_raid1 * 100.0);
-        ImGui::Columns(1);
-    } else {
-        ImGui::TextColored(ImVec4(1,1,0,1), "Select 2+ disks (check boxes) to see planner");
-    }
-    ImGui::End();
-}
 
-static void ShowVolumeInfo(void) {
-    ImGui::Begin("Volume Info", NULL, ImGuiWindowFlags_NoCollapse);
+static void ShowVolumeInfoContent(void) {
     UI_VOLUME_INFO* vi = &g_gui.vol_info;
+    UI_HEALTH_SUMMARY* h = &g_gui.health;
     if (vi->exists) {
         ImGui::Columns(2, NULL, false);
         ImGui::Text("State:"); ImGui::NextColumn();
         {   const char* st = ui_get_state_str();
-            ImVec4 s_col = ImVec4(1,1,1,1);
+            ImVec4 s_col = ImVec4(0,0,0,1);
             if (strcmp(st, "DEGRADED") == 0) s_col = ImVec4(1,1,0,1);
             else if (strcmp(st, "RECOVERING") == 0) s_col = ImVec4(0.3f,0.6f,1,1);
-            else if (strcmp(st, "MOUNTED") == 0) s_col = ImVec4(0,1,0,1);
+            else if (strcmp(st, "MOUNTED") == 0) s_col = ImVec4(0,0.6f,0,1);
             ImGui::TextColored(s_col, "%s", st);
         } ImGui::NextColumn();
         ImGui::Text("RAID Level:"); ImGui::NextColumn();
@@ -1217,121 +1033,63 @@ static void ShowVolumeInfo(void) {
         ImGui::Text("Disks:"); ImGui::NextColumn();
         ImGui::Text("%u", vi->disk_count); ImGui::NextColumn();
         ImGui::Text("Capacity:"); ImGui::NextColumn();
-        ImGui::Text("%llu GB (%llu bytes)", vi->virtual_capacity_bytes / 1000000000ULL,
-            vi->virtual_capacity_bytes); ImGui::NextColumn();
+        ImGui::Text("%llu GB", vi->virtual_capacity_bytes / 1000000000ULL); ImGui::NextColumn();
         ImGui::Text("Used:"); ImGui::NextColumn();
-        UI_HEALTH_SUMMARY* h = &g_gui.health;
         if (vi->mounted && h->total_count > 0) {
             double used_pct = (double)vi->bytes_written / (double)vi->virtual_capacity_bytes * 100.0;
             if (used_pct > 100) used_pct = 100;
-            ImGui::Text("%.1f%% (%llu GB)", used_pct, vi->bytes_written / 1000000000ULL);
-            ImGui::ProgressBar((float)(used_pct / 100.0), ImVec2(0, 10), "");
+            ImGui::Text("%.1f%%", used_pct);
         } else { ImGui::TextUnformatted("N/A"); } ImGui::NextColumn();
         ImGui::Text("Mounted:"); ImGui::NextColumn();
-        if (vi->mounted) ImGui::TextColored(ImVec4(0,1,0,1), "Yes");
+        if (vi->mounted) ImGui::TextColored(ImVec4(0,0.6f,0,1), "Yes");
         else ImGui::TextUnformatted("No");
         ImGui::NextColumn();
         ImGui::Text("Cache:"); ImGui::NextColumn();
         ImGui::Text("%s (%u MB)", vi->cache_enabled ? "ON" : "OFF", vi->cache_mb); ImGui::NextColumn();
-        ImGui::Text("Written:"); ImGui::NextColumn();
-        char wb[32]; snprintf(wb, 32, "%llu MB", vi->bytes_written / 1000000ULL);
-        ImGui::TextUnformatted(wb); ImGui::NextColumn();
         ImGui::Text("Read:"); ImGui::NextColumn();
         char rb[32]; snprintf(rb, 32, "%llu MB", vi->bytes_read / 1000000ULL);
         ImGui::TextUnformatted(rb); ImGui::NextColumn();
-        ImGui::Text("UUID:"); ImGui::NextColumn();
-        ImGui::TextUnformatted(vi->uuid_str); ImGui::NextColumn();
-        ImGui::Text("Generation:"); ImGui::NextColumn();
-        ImGui::Text("%llu", vi->generation); ImGui::NextColumn();
-        if (vi->uptime_seconds > 0) {
-            ImGui::Text("Uptime:"); ImGui::NextColumn();
-            int hu = (int)(vi->uptime_seconds / 3600);
-            int mu = (int)((vi->uptime_seconds - hu * 3600) / 60);
-            int su = (int)(vi->uptime_seconds - hu * 3600 - mu * 60);
-            ImGui::Text("%02d:%02d:%02d", hu, mu, su); ImGui::NextColumn();
-        }
+        ImGui::Text("Write:"); ImGui::NextColumn();
+        char wb[32]; snprintf(wb, 32, "%llu MB", vi->bytes_written / 1000000ULL);
+        ImGui::TextUnformatted(wb); ImGui::NextColumn();
         ImGui::Columns(1);
         ImGui::Separator();
-        ImGui::Text("Health:"); ImGui::SameLine();
+        ImGui::Text("Health: "); ImGui::SameLine();
         if (h->total_count > 0 && !h->degraded)
-            ImGui::TextColored(ImVec4(0,1,0,1), "%u/%u healthy", h->healthy_count, h->total_count);
+            ImGui::TextColored(ImVec4(0,0.6f,0,1), "%u/%u healthy", h->healthy_count, h->total_count);
         else if (h->degraded)
             ImGui::TextColored(ImVec4(1,1,0,1), "%u/%u DEGRADED", h->healthy_count, h->total_count);
         else ImGui::TextUnformatted("N/A");
     } else {
         ImGui::TextDisabled("No volume - Scan + Create first");
     }
-    ImGui::End();
 }
 
-static void ShowPerformancePanel(void) {
-    ImGui::Begin("Performance", NULL, ImGuiWindowFlags_NoCollapse);
-    UI_VOLUME_INFO* vi = &g_gui.vol_info;
-    profiler_update_rates(vi->bytes_read, vi->bytes_written);
-    IO_PROFILER* p = profiler_get();
-    ImGui::Columns(2, NULL, false);
-    char buf[64];
-    ImGui::Text("Read:"); ImGui::NextColumn();
-    snprintf(buf, sizeof(buf), "%.1f MB/s", p->avg_read_mbs);
-    ImGui::TextUnformatted(buf); ImGui::NextColumn();
-    ImGui::Text("Write:"); ImGui::NextColumn();
-    snprintf(buf, sizeof(buf), "%.1f MB/s", p->avg_write_mbs);
-    ImGui::TextUnformatted(buf); ImGui::NextColumn();
-    ImGui::Text("Avg Read Latency:"); ImGui::NextColumn();
-    snprintf(buf, sizeof(buf), "%.2f ms", p->avg_read_latency_ms);
-    ImGui::TextUnformatted(buf); ImGui::NextColumn();
-    ImGui::Text("Avg Write Latency:"); ImGui::NextColumn();
-    snprintf(buf, sizeof(buf), "%.2f ms", p->avg_write_latency_ms);
-    ImGui::TextUnformatted(buf); ImGui::NextColumn();
-    ImGui::Text("IOPS:"); ImGui::NextColumn();
-    snprintf(buf, sizeof(buf), "%.0f (R) / %.0f (W)", p->avg_iops_read, p->avg_iops_write);
-    ImGui::TextUnformatted(buf); ImGui::NextColumn();
-    ImGui::Text("Queue Depth:"); ImGui::NextColumn();
-    snprintf(buf, sizeof(buf), "%u", (unsigned int)p->avg_queue_depth);
-    ImGui::TextUnformatted(buf); ImGui::NextColumn();
-    ImGui::Columns(1);
-    UI_HEALTH_SUMMARY* h = &g_gui.health;
-    ImGui::Separator();
-    if (vi->mounted && h->total_count > 0) {
-        ImGui::Text("Capacity:"); ImGui::SameLine();
-        double used_pct = (double)vi->bytes_written / (double)vi->virtual_capacity_bytes * 100.0;
-        if (used_pct > 100) used_pct = 100;
-        snprintf(buf, sizeof(buf), "%.1f%%", used_pct);
-        ImGui::ProgressBar((float)(used_pct / 100.0), ImVec2(0, 12), buf);
-    }
-    if (h->total_count > 0)
-        ImGui::Text("Volume: %s", h->degraded ? "DEGRADED" : "Healthy");
-    ImGui::End();
-}
 
-static void ShowEventLog(void) {
-    ImGui::Begin("Event Log", NULL, ImGuiWindowFlags_NoCollapse);
-    ImGui::BeginChild("##logsc", ImVec2(0, ImGui::GetContentRegionAvail().y), false);
+static void ShowEventLogContent(float height) {
+    ImGui::BeginChild("##logsc", ImVec2(0, height), true);
     EnterCriticalSection(&g_gui.log_lock);
     int n = g_gui.log_count;
     int start = n < MAX_LOG_LINES ? 0 : g_gui.log_tail;
     for (int i = start; i < start + n; i++) {
         int idx = i % MAX_LOG_LINES;
         if (g_gui.log_lines[idx][0] == 0) continue;
-        ImVec4 col(1,1,1,1);
+        ImVec4 col(0,0,0,1);
         if (strstr(g_gui.log_lines[idx], "ERROR") || strstr(g_gui.log_lines[idx], "FAILED"))
             col = ImVec4(1,0.3f,0.3f,1);
-        else if (strstr(g_gui.log_lines[idx], "WARN")) col = ImVec4(1,1,0,1);
-        else if (strstr(g_gui.log_lines[idx], "OK")) col = ImVec4(0.3f,1,0.3f,1);
-        else if (strstr(g_gui.log_lines[idx], "INFO")) col = ImVec4(0.6f,0.8f,1,1);
+        else if (strstr(g_gui.log_lines[idx], "WARN")) col = ImVec4(1,0.8f,0,1);
+        else if (strstr(g_gui.log_lines[idx], "OK")) col = ImVec4(0,0.5f,0,1);
+        else if (strstr(g_gui.log_lines[idx], "INFO")) col = ImVec4(0,0.4f,0.7f,1);
         ImGui::TextColored(col, "%s", g_gui.log_lines[idx]);
     }
     LeaveCriticalSection(&g_gui.log_lock);
     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
-    ImGui::End();
 }
 
-static void ShowStatusBar(void) {
-    ImGui::Begin("StatusBar", NULL,
-        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
+static void ShowStatusBarContent(float height) {
+    ImGui::BeginChild("##status", ImVec2(0, height), false);
     float w = ImGui::GetContentRegionAvail().x;
     ImGui::TextUnformatted(g_gui.status);
     ImGui::SameLine();
@@ -1364,7 +1122,7 @@ static void ShowStatusBar(void) {
         ImGui::SameLine(w - 170);
         ImGui::Text("RAIDTEST %s", APP_VERSION);
     }
-    ImGui::End();
+    ImGui::EndChild();
 }
 
 static void ShowConfirmDestroy(void) {
@@ -1446,43 +1204,6 @@ static void ShowExportDialog(void) {
     }
 }
 
-static void ShowBeginnerPanel(void) {
-    ImGui::Begin("Quick Actions", NULL, ImGuiWindowFlags_NoCollapse);
-    float bw = 160;
-    bool busy = btn_disabled();
-    ImGui::TextWrapped("Quick actions for common RAID tasks. Click a button to get started.");
-    ImGui::Separator();
-    ImGui::Dummy(ImVec2(0, 8));
-    if (ImGui::Button("Quick Setup", ImVec2(bw, 32)) && !busy) start_worker(W_QUICK_SETUP, NULL);
-    ImGui::SameLine();
-    if (ImGui::Button("Scan Disks", ImVec2(bw, 32)) && !busy) start_worker(W_SCAN, NULL);
-    ImGui::Dummy(ImVec2(0, 4));
-    if (ImGui::Button("Restore Volume", ImVec2(bw, 32)) && !busy) start_worker(W_LOAD_CONFIG, NULL);
-    ImGui::SameLine();
-    if (ImGui::Button("Health Check", ImVec2(bw, 32)) && !busy) start_worker(W_CHECK, NULL);
-    ImGui::Dummy(ImVec2(0, 4));
-    if (g_gui.vol_info.mounted) {
-        if (ImGui::Button("Unmount", ImVec2(bw, 32)) && !busy) start_worker(W_UNMOUNT, NULL);
-        ImGui::SameLine();
-        if (ImGui::Button("Benchmark", ImVec2(bw, 32)) && !busy) {
-            g_gui.show_bench = true; g_gui.bench_done = false;
-            g_gui.bench_read_mbs[0] = 0; g_gui.bench_write_mbs[0] = 0; g_gui.bench_latency[0] = 0;
-            char m[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
-            start_worker(W_BENCHFS, m);
-        }
-    }
-    ImGui::Dummy(ImVec2(0, 8));
-    ImGui::Separator();
-    ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1), "Tip: Switch to Advanced or Developer mode for full control.");
-    if (g_gui.vol_info.exists && g_gui.vol_info.mounted && !busy) {
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::Text("Volume: %s at %s | Cache: %s",
-            g_gui.vol_info.uuid_str, g_gui.vol_info.mount_point,
-            g_gui.vol_info.cache_enabled ? "ON" : "OFF");
-    }
-    ImGui::End();
-    ShowHealthDashboard();
-}
 
 static void ShowRestoreWizard(void) {
     if (!g_gui.show_restore_wizard) return;
@@ -1547,20 +1268,18 @@ static void ShowRebuildWizard(void) {
 }
 
 static void ShowSimulationControls(void) {
-    ImGui::Begin("Simulation Controls", NULL, ImGuiWindowFlags_NoCollapse);
     if (!g_gui.vol_info.mounted) {
         ImGui::TextDisabled("Mount a volume, then simulate disk faults here.");
-        ImGui::End();
         return;
     }
     static int sim_disk_idx = 0;
+    ImGui::Text("Simulate Faults"); ImGui::Separator();
     ImGui::Text("Disk index:"); ImGui::SameLine();
     ImGui::SetNextItemWidth(60);
     ImGui::InputInt("##sim_disk", &sim_disk_idx, 1, 1);
     if (sim_disk_idx < 0) sim_disk_idx = 0;
     if (sim_disk_idx > 3) sim_disk_idx = 3;
     bool busy = btn_disabled();
-    ImGui::Separator();
     if (ImGui::Button("Simulate Fail", ImVec2(120, 26)) && !busy) {
         char p[8]; snprintf(p, sizeof(p), "%d", sim_disk_idx);
         start_worker(W_SIMULATE_FAIL, p);
@@ -1575,7 +1294,6 @@ static void ShowSimulationControls(void) {
         char p[8]; snprintf(p, sizeof(p), "%d", sim_disk_idx);
         start_worker(W_SIMULATE_DISCONNECT, p);
     }
-    ImGui::End();
 }
 
 static void RenderMainUI(void) {
@@ -1585,44 +1303,37 @@ static void RenderMainUI(void) {
     ImGui::Begin("Main", NULL,
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoBringToFrontOnFocus |
         ImGuiWindowFlags_MenuBar);
+
     ShowModeTabs();
+
+    float toolbar_h = 32;
+    float log_h = 100;
     float status_h = 26;
     float avail_h = ImGui::GetContentRegionAvail().y;
-    float log_h = 170;
-    float used_h = log_h + status_h;
-    bool adv_dev = (g_gui.mode != MODE_BEGINNER);
-    if (adv_dev) {
-        float toolbar_h = 32;
-        used_h += toolbar_h;
-        ImGui::BeginChild("##tb", ImVec2(0, toolbar_h), false);
-        ShowToolbar();
-        ImGui::EndChild();
+    float mid_h = avail_h - log_h - status_h - toolbar_h - 18;
+
+    ImGui::BeginChild("##tb", ImVec2(0, toolbar_h), false);
+    ShowToolbar();
+    ImGui::EndChild();
+
+    float left_w = ImGui::GetContentRegionAvail().x * 0.60f;
+    ImGui::BeginChild("##left", ImVec2(left_w, mid_h), true);
+    ShowDiskList();
+    ImGui::EndChild();
+    ImGui::SameLine();
+
+    float right_w = ImGui::GetContentRegionAvail().x;
+    ImGui::BeginChild("##right", ImVec2(right_w, mid_h), true);
+    ShowVolumeInfoContent();
+    if (g_gui.mode == MODE_DEVELOPER) {
+        ShowSimulationControls();
     }
-    float mid_h = avail_h - used_h - 18;
-    if (g_gui.mode == MODE_BEGINNER) {
-        ImGui::BeginChild("##beginner", ImVec2(0, mid_h), true);
-        ShowBeginnerPanel();
-        ImGui::EndChild();
-    } else {
-        float left_w = ImGui::GetContentRegionAvail().x * 0.55f;
-        ImGui::BeginChild("##left", ImVec2(left_w, mid_h), true);
-        ShowDiskList();
-        ShowPlanner();
-        ImGui::EndChild();
-        ImGui::SameLine();
-        ImGui::BeginChild("##right", ImVec2(0, mid_h), true);
-        ShowVolumeInfo();
-        if (g_gui.mode == MODE_DEVELOPER) {
-            ShowSimulationControls();
-            ShowPerformanceDashboard();
-        } else
-            ShowPerformancePanel();
-        ImGui::EndChild();
-    }
-    ShowEventLog();
-    ShowStatusBar();
+    ImGui::EndChild();
+
+    ShowEventLogContent(log_h);
+    ShowStatusBarContent(status_h);
     ShowWelcomeWizard();
     ShowRestoreWizard();
     ShowRebuildWizard();
@@ -1634,46 +1345,41 @@ static void RenderMainUI(void) {
     ShowExportDialog();
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (adv_dev) {
-                if (ImGui::MenuItem("Refresh", "F5", false, !g_gui.worker_running)) start_worker(W_REFRESH, NULL);
-                ImGui::Separator();
-                if (ImGui::MenuItem("Export Diagnostic", NULL, false, !g_gui.worker_running)) start_worker(W_EXPORT, NULL);
-                ImGui::Separator();
-            }
+            if (ImGui::MenuItem("Refresh", "F5", false, !g_gui.worker_running)) start_worker(W_REFRESH, NULL);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Export Diagnostic", NULL, false, !g_gui.worker_running)) start_worker(W_EXPORT, NULL);
+            ImGui::Separator();
             if (ImGui::MenuItem("Settings", NULL, false)) g_gui.show_settings = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Alt+F4")) PostQuitMessage(0);
             ImGui::EndMenu();
         }
-        if (adv_dev) {
-            if (ImGui::BeginMenu("Actions")) {
-                if (ImGui::MenuItem("Scan", NULL, false, !g_gui.worker_running)) start_worker(W_SCAN, NULL);
-                bool can_create = g_gui.state_value == 1 && g_gui.selected_count >= 2 && !g_gui.worker_running;
-                if (ImGui::MenuItem("Create", NULL, false, can_create)) start_worker(W_CREATE, NULL);
-                if (ImGui::MenuItem("Mirror", NULL, false, can_create)) start_worker(W_MIRROR, NULL);
-                if (ImGui::MenuItem("Restore", NULL, false, !g_gui.worker_running)) g_gui.show_restore_wizard = true;
-                bool can_mount = g_gui.state_value >= 2 && !g_gui.vol_info.mounted && !g_gui.worker_running;
-                if (ImGui::MenuItem("Mount", NULL, false, can_mount)) start_worker(W_MOUNT, NULL);
-                bool can_umount = g_gui.vol_info.mounted && !g_gui.worker_running;
-                if (ImGui::MenuItem("Unmount", NULL, false, can_umount)) start_worker(W_UNMOUNT, NULL);
-                bool can_destroy = g_gui.state_value >= 2 && !g_gui.worker_running;
-                if (ImGui::MenuItem("Destroy", NULL, false, can_destroy)) g_gui.show_confirm_destroy = true;
-                ImGui::Separator();
-                bool can_bench = g_gui.vol_info.mounted && !g_gui.worker_running;
-                if (ImGui::MenuItem("Benchmark", NULL, false, can_bench)) {
-                    g_gui.show_bench = true; g_gui.bench_done = false;
-                    g_gui.bench_read_mbs[0] = 0; g_gui.bench_write_mbs[0] = 0; g_gui.bench_latency[0] = 0;
-                    char m[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
-                    start_worker(W_BENCHFS, m);
-                }
-                if (ImGui::MenuItem("Rebuild", NULL, false, !g_gui.worker_running)) g_gui.show_rebuild_wizard = true;
-                ImGui::EndMenu();
+        if (ImGui::BeginMenu("Actions")) {
+            if (ImGui::MenuItem("Scan", NULL, false, !g_gui.worker_running)) start_worker(W_SCAN, NULL);
+            bool can_create = g_gui.state_value == 1 && g_gui.selected_count >= 2 && !g_gui.worker_running;
+            if (ImGui::MenuItem("Create", NULL, false, can_create)) start_worker(W_CREATE, NULL);
+            if (ImGui::MenuItem("Mirror", NULL, false, can_create)) start_worker(W_MIRROR, NULL);
+            if (ImGui::MenuItem("Restore", NULL, false, !g_gui.worker_running)) g_gui.show_restore_wizard = true;
+            bool can_mount = g_gui.state_value >= 2 && !g_gui.vol_info.mounted && !g_gui.worker_running;
+            if (ImGui::MenuItem("Mount", NULL, false, can_mount)) start_worker(W_MOUNT, NULL);
+            bool can_umount = g_gui.vol_info.mounted && !g_gui.worker_running;
+            if (ImGui::MenuItem("Unmount", NULL, false, can_umount)) start_worker(W_UNMOUNT, NULL);
+            bool can_destroy = g_gui.state_value >= 2 && !g_gui.worker_running;
+            if (ImGui::MenuItem("Destroy", NULL, false, can_destroy)) g_gui.show_confirm_destroy = true;
+            ImGui::Separator();
+            bool can_bench = g_gui.vol_info.mounted && !g_gui.worker_running;
+            if (ImGui::MenuItem("Benchmark", NULL, false, can_bench)) {
+                g_gui.show_bench = true; g_gui.bench_done = false;
+                g_gui.bench_read_mbs[0] = 0; g_gui.bench_write_mbs[0] = 0; g_gui.bench_latency[0] = 0;
+                char m[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
+                start_worker(W_BENCHFS, m);
             }
-            if (ImGui::BeginMenu("View")) {
-                if (ImGui::MenuItem("Settings")) g_gui.show_settings = true;
-                if (ImGui::MenuItem("About")) g_gui.show_about = true;
-                ImGui::EndMenu();
-            }
+            if (ImGui::MenuItem("Rebuild", NULL, false, !g_gui.worker_running)) g_gui.show_rebuild_wizard = true;
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("About")) g_gui.show_about = true;
+            ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
     }
@@ -1694,13 +1400,13 @@ extern "C" int gui_run(void) {
         MessageBoxA(NULL, "Failed to create DirectX 11 device.\n\nYour GPU or driver may not support DirectX 11.", "Error", MB_ICONERROR);
         return 1;
     }
-    ShowWindow(g_gui.hwnd, SW_SHOWMAXIMIZED);
+    ShowWindow(g_gui.hwnd, SW_SHOWNORMAL);
     UpdateWindow(g_gui.hwnd);
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     config_defaults(&g_gui.settings);
     config_load(&g_gui.settings);
-    g_gui.use_light_theme = (g_gui.settings.theme == THEME_LIGHT);
+    g_gui.use_light_theme = true;
     ApplyTheme();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = NULL;
