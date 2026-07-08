@@ -21,6 +21,8 @@
 #include <d3dcompiler.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <io.h>
+#include <fcntl.h>
 
 #define MAX_LOG_LINES 500
 #define MAX_LOG_LINE_LEN 256
@@ -41,6 +43,17 @@ enum WorkerAction {
     W_REBUILD, W_CHECK,
     W_SIMULATE_FAIL, W_SIMULATE_HEALTHY, W_SIMULATE_DISCONNECT,
     W_WIZARD_SCAN, W_WIZARD_CREATE,
+    W_CLEANUP,
+    W_CACHE,
+    W_PURGE,
+    W_BENCH,
+    W_TEST,
+    W_RANDOM,
+    W_CONFIG_SAVE,
+    W_CONFIG_LOAD,
+    W_EXPAND,
+    W_MAP,
+    W_METADATA,
 };
 
 enum ToastType { TOAST_INFO = 0, TOAST_OK, TOAST_WARN, TOAST_ERROR };
@@ -92,20 +105,38 @@ static struct {
 
     char                    mount_letter;
     int                     pool_size_mb;
+    int                     pool_per_disk[8];
+
+    bool                    show_expand_dialog;
+    bool                    show_map_dialog;
+    bool                    show_metadata_dialog;
+    char                    dialog_text[8192];
+    int                     expand_disk_ids[8];
+    int                     expand_sizes[8];
+    int                     expand_count;
+    bool                    expand_checks[64];
 
     bool                    show_about;
     bool                    show_settings;
     bool                    show_confirm_destroy;
 
     bool                    show_bench;
+    bool                    show_bench_raw;
     bool                    show_export_dialog;
     bool                    show_welcome;
+    bool                    show_purge_confirm;
     char                    export_result[512];
 
     char                    bench_read_mbs[32];
     char                    bench_write_mbs[32];
     char                    bench_latency[32];
     bool                    bench_done;
+    char                    bench_raw_read[32];
+    char                    bench_raw_write[32];
+    bool                    bench_raw_done;
+    int                     random_ops;
+    int                     random_maxkb;
+    char                    test_result[256];
 
     char                    status[128];
     int                     state_value;
@@ -629,6 +660,202 @@ static unsigned int __stdcall worker_thread(void* arg) {
         else toast_push("Simulation failed", TOAST_ERROR);
         break;
     }
+    case W_CLEANUP: {
+        strncpy(g_gui.progress_text, "Cleaning up...", 63);
+        strncpy(g_gui.progress_step, "Releasing all RAID resources...", 63);
+        raid_cleanup();
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Cleanup complete - all resources released");
+        refresh_ui_model();
+        toast_push("Cleanup complete", TOAST_OK);
+        break;
+    }
+    case W_CACHE: {
+        strncpy(g_gui.progress_text, "Cache...", 63);
+        g_gui.progress_frac = 0.5f;
+        if (!params || params[0] == 0) { snprintf(result, 511, "Cache: no params"); break; }
+        char buf[256]; strncpy(buf, params, 255); buf[255] = 0;
+        char* av[2]; int ac = 0;
+        char* tok = strtok(buf, " ");
+        while (tok && ac < 2) { av[ac++] = tok; tok = strtok(NULL, " "); }
+        RC rc = raid_cache(ac, av);
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Cache: %s", rc == RC_OK ? "OK" : "FAILED");
+        refresh_ui_model();
+        break;
+    }
+    case W_PURGE: {
+        strncpy(g_gui.progress_text, "Purging...", 63);
+        strncpy(g_gui.progress_step, "Removing all pool files and superblock...", 63);
+        g_gui.progress_frac = 0.5f;
+        RC rc = raid_purge();
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Purge: %s - All pool files and superblock removed", rc == RC_OK ? "OK" : "FAILED");
+        refresh_ui_model();
+        if (rc == RC_OK) toast_push("Purge complete", TOAST_OK);
+        else toast_push("Purge failed", TOAST_ERROR);
+        break;
+    }
+    case W_BENCH: {
+        strncpy(g_gui.progress_text, "Raw Bench...", 63);
+        g_gui.progress_frac = 0.0f;
+        char* args[2] = {0}; int argc = 0;
+        if (params[0]) { char* tok = strtok(params, " "); while (tok && argc < 2) { args[argc++] = tok; tok = strtok(NULL, " "); } }
+        for (int step = 0; step < 4; step++) {
+            snprintf(g_gui.progress_step, 63, "Step %d/4: Benchmarking raw disks...", step + 1);
+            g_gui.progress_frac = (step + 1) * 0.25f;
+            if (InterlockedCompareExchange(&g_gui.worker_cancel, 1, 1) == 1) { strncpy(result, "Bench cancelled", 511); goto raw_bench_done; }
+            Sleep(250);
+        }
+        { RC rc = raid_bench(argc, args);
+        g_gui.progress_frac = 1.0f;
+        if (rc == RC_OK) {
+            uint32_t dc = device_get_count();
+            float tot_r = 0, tot_w = 0; int n = 0;
+            for (uint32_t i = 0; i < dc; i++) {
+                DISK_INFO* d = device_get(i);
+                if (d && d->selected && d->benchmarked) {
+                    tot_r += (float)d->bench_read_mbs;
+                    tot_w += (float)d->bench_write_mbs;
+                    n++;
+                }
+            }
+            if (n > 0) {
+                snprintf(g_gui.bench_raw_read, 31, "%.1f", tot_r / n);
+                snprintf(g_gui.bench_raw_write, 31, "%.1f", tot_w / n);
+            } else {
+                strncpy(g_gui.bench_raw_read, "N/A", 31);
+                strncpy(g_gui.bench_raw_write, "N/A", 31);
+            }
+            g_gui.bench_raw_done = true;
+            g_gui.show_bench_raw = true;
+            snprintf(result, 511, "Raw Bench: R=%.1f W=%.1f MB/s (avg)", tot_r / (n > 0 ? n : 1), tot_w / (n > 0 ? n : 1));
+            toast_push("Raw bench complete", TOAST_OK);
+        } else { snprintf(result, 511, "Raw Bench FAILED"); toast_push("Raw bench failed", TOAST_ERROR); } }
+        raw_bench_done:;
+        break;
+    }
+    case W_TEST: {
+        strncpy(g_gui.progress_text, "Running I/O verification...", 63);
+        strncpy(g_gui.progress_step, "Writing + reading + verifying data on volume...", 63);
+        g_gui.progress_frac = 0.5f;
+        RC rc = raid_test();
+        g_gui.progress_frac = 1.0f;
+        snprintf(g_gui.test_result, 255, "I/O verification: %s - Volume data integrity %s", rc == RC_OK ? "PASS" : "FAIL", rc == RC_OK ? "OK" : "CHECK FAILED");
+        snprintf(result, 511, "%s", g_gui.test_result);
+        refresh_ui_model();
+        if (rc == RC_OK) toast_push("I/O verification passed", TOAST_OK);
+        else toast_push("I/O verification FAILED - data corruption detected", TOAST_ERROR);
+        break;
+    }
+    case W_RANDOM: {
+        strncpy(g_gui.progress_text, "Random I/O stress test...", 63);
+        strncpy(g_gui.progress_step, "Running random I/O operations...", 63);
+        g_gui.progress_frac = 0.0f;
+        char pbuf[64]; snprintf(pbuf, 63, "%d %d", g_gui.random_ops ? g_gui.random_ops : 100, g_gui.random_maxkb ? g_gui.random_maxkb : 64);
+        char* av[2]; int ac = 0;
+        char* tok = strtok(pbuf, " "); while (tok && ac < 2) { av[ac++] = tok; tok = strtok(NULL, " "); }
+        for (int step = 0; step < 5; step++) {
+            snprintf(g_gui.progress_step, 63, "Random I/O pass %d/5...", step + 1);
+            g_gui.progress_frac = (step + 1) * 0.2f;
+            if (InterlockedCompareExchange(&g_gui.worker_cancel, 1, 1) == 1) { strncpy(result, "Random test cancelled", 511); goto random_done; }
+            Sleep(200);
+        }
+        { RC rc = raid_random(ac, av);
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Random I/O test: %s (%d ops, %d KB max)", rc == RC_OK ? "PASS" : "FAIL", g_gui.random_ops ? g_gui.random_ops : 100, g_gui.random_maxkb ? g_gui.random_maxkb : 64);
+        refresh_ui_model();
+        if (rc == RC_OK) toast_push("Random I/O test passed", TOAST_OK);
+        else toast_push("Random I/O test FAILED", TOAST_ERROR); }
+        random_done:;
+        break;
+    }
+    case W_CONFIG_SAVE: {
+        strncpy(g_gui.progress_text, "Saving config...", 63);
+        strncpy(g_gui.progress_step, "Saving current configuration to file...", 63);
+        g_gui.progress_frac = 0.5f;
+        RC rc = raid_config_save();
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Config save: %s", rc == RC_OK ? "OK - configuration saved" : "FAILED");
+        if (rc == RC_OK) toast_push("Configuration saved", TOAST_OK);
+        else toast_push("Config save failed", TOAST_ERROR);
+        break;
+    }
+    case W_CONFIG_LOAD: {
+        strncpy(g_gui.progress_text, "Loading config...", 63);
+        strncpy(g_gui.progress_step, "Loading saved configuration...", 63);
+        g_gui.progress_frac = 0.5f;
+        RC rc = raid_config_load();
+        g_gui.progress_frac = 1.0f;
+        refresh_ui_model();
+        snprintf(result, 511, "Config load: %s", rc == RC_OK ? "OK - configuration restored" : "FAILED");
+        if (rc == RC_OK) toast_push("Configuration loaded", TOAST_OK);
+        else toast_push("Config load failed", TOAST_ERROR);
+        break;
+    }
+    case W_EXPAND: {
+        strncpy(g_gui.progress_text, "Expanding volume...", 63);
+        strncpy(g_gui.progress_step, "Adding new disks to stripe...", 63);
+        g_gui.progress_frac = 0.3f;
+        char* av[8]; int ac = 0;
+        char buf[256]; strncpy(buf, params, 255); buf[255] = 0;
+        char* tok = strtok(buf, " ");
+        while (tok && ac < 8) { av[ac++] = tok; tok = strtok(NULL, " "); }
+        g_gui.progress_frac = 0.6f;
+        RC rc = raid_expand(ac, av);
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Expand: %s - Added %d disk(s) to stripe", rc == RC_OK ? "OK" : "FAILED", ac);
+        refresh_ui_model();
+        if (rc == RC_OK) toast_push("Volume expanded", TOAST_OK);
+        else toast_push("Expand failed", TOAST_ERROR);
+        break;
+    }
+    case W_MAP: {
+        strncpy(g_gui.progress_text, "Reading LBA map...", 63);
+        strncpy(g_gui.progress_step, "Dumping LBA-to-disk mapping...", 63);
+        g_gui.progress_frac = 0.5f;
+        int pipe_fds[2];
+        int saved = _dup(_fileno(stdout));
+        _pipe(pipe_fds, 65536, _O_BINARY);
+        _dup2(pipe_fds[1], _fileno(stdout));
+        _close(pipe_fds[1]);
+        RC rc = raid_map();
+        _dup2(saved, _fileno(stdout));
+        _close(saved);
+        setvbuf(stdout, NULL, _IONBF, 0);
+        int n = _read(pipe_fds[0], g_gui.dialog_text, 8191);
+        if (n < 0) n = 0;
+        g_gui.dialog_text[n] = 0;
+        _close(pipe_fds[0]);
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Map: %s (%d bytes)", rc == RC_OK ? "OK" : "FAILED", n);
+        g_gui.show_map_dialog = true;
+        break;
+    }
+    case W_METADATA: {
+        strncpy(g_gui.progress_text, "Reading metadata...", 63);
+        strncpy(g_gui.progress_step, "Dumping superblock contents...", 63);
+        g_gui.progress_frac = 0.5f;
+        int pipe_fds[2];
+        int saved = _dup(_fileno(stdout));
+        _pipe(pipe_fds, 65536, _O_BINARY);
+        _dup2(pipe_fds[1], _fileno(stdout));
+        _close(pipe_fds[1]);
+        char mnt[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
+        char* mav[] = { mnt };
+        RC rc = raid_metadata(1, mav);
+        _dup2(saved, _fileno(stdout));
+        _close(saved);
+        setvbuf(stdout, NULL, _IONBF, 0);
+        int n = _read(pipe_fds[0], g_gui.dialog_text, 8191);
+        if (n < 0) n = 0;
+        g_gui.dialog_text[n] = 0;
+        _close(pipe_fds[0]);
+        g_gui.progress_frac = 1.0f;
+        snprintf(result, 511, "Metadata: %s (%d bytes)", rc == RC_OK ? "OK" : "FAILED", n);
+        g_gui.show_metadata_dialog = true;
+        break;
+    }
     default:
         snprintf(result, 511, "Unknown action");
     }
@@ -908,9 +1135,12 @@ static void ShowToolbar(void) {
     if (!create_ok) ImGui::BeginDisabled();
     if (ImGui::Button("Create", ImVec2(bw, 28))) {
         char p[256] = {0}; int pos = 0;
-        for (int i = 0; i < g_gui.selected_count && i < 4; i++)
+        for (int i = 0; i < g_gui.selected_count && i < 4; i++) {
+            int mb = g_gui.pool_per_disk[i] > 0 ? g_gui.pool_per_disk[i] :
+                     (g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200);
             pos += snprintf(p + pos, 255 - (size_t)pos, "%s%d:%d", pos ? " " : "",
-                g_gui.selected_disks[i], g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200);
+                g_gui.selected_disks[i], mb);
+        }
         start_worker(W_CREATE, p);
     }
     if (!create_ok) ImGui::EndDisabled();
@@ -933,6 +1163,10 @@ static void ShowToolbar(void) {
     if (!destroyable) ImGui::BeginDisabled();
     if (ImGui::Button("Destroy", ImVec2(bw, 28))) g_gui.show_confirm_destroy = true;
     if (!destroyable) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Quick", ImVec2(bw, 28)) && !busy) start_worker(W_QUICK_SETUP, NULL);
+    ImGui::SameLine();
+    if (ImGui::Button("Check", ImVec2(bw, 28)) && !busy) start_worker(W_CHECK, NULL);
     ImGui::SameLine();
     if (!benchable) ImGui::BeginDisabled();
     if (ImGui::Button("Bench", ImVec2(bw, 28))) {
@@ -1009,11 +1243,50 @@ static void ShowDiskList(void) {
             }
             device_select(indices, n);
             refresh_ui_model();
+            int default_mb = g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200;
+            for (int si = 0; si < g_gui.selected_count && si < 8; si++) {
+                DISK_INFO* d = device_get(g_gui.selected_disks[si]);
+                uint64_t max_bytes = d ? (d->pool_bytes > 0 ? d->pool_bytes : d->total_bytes) : 0;
+                int max_mb = max_bytes > 0 ? (int)(max_bytes / 1048576) : default_mb;
+                g_gui.pool_per_disk[si] = default_mb < max_mb ? default_mb : max_mb;
+            }
         }
         ImGui::EndTable();
     }
 }
 
+static void ShowDiskAllocation(void) {
+    if (g_gui.selected_count < 1) return;
+    ImGui::SeparatorText("Disk Allocation");
+    int def = g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200;
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputInt("##unif_pool", &def, 1024);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set All")) {
+        for (int i = 0; i < g_gui.selected_count && i < 8; i++) {
+            DISK_INFO* d = device_get(g_gui.selected_disks[i]);
+            uint64_t max_bytes = d ? (d->pool_bytes > 0 ? d->pool_bytes : d->total_bytes) : 0;
+            int max_mb = max_bytes > 0 ? (int)(max_bytes / 1048576) : def;
+            g_gui.pool_per_disk[i] = def < max_mb ? def : max_mb;
+        }
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("MB (uniform)");
+    for (int i = 0; i < g_gui.selected_count && i < 8; i++) {
+        DISK_INFO* d = device_get(g_gui.selected_disks[i]);
+        if (!d) continue;
+        char modelA[64] = {0}; wcstombs(modelA, d->model, 63);
+        uint64_t max_bytes = d->pool_bytes > 0 ? d->pool_bytes : d->total_bytes;
+        int max_mb = max_bytes > 0 ? (int)(max_bytes / 1048576) : 0;
+        char label[16]; snprintf(label, 16, "##pd%d", i);
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputInt(label, &g_gui.pool_per_disk[i], 1024);
+        if (g_gui.pool_per_disk[i] < 0) g_gui.pool_per_disk[i] = 0;
+        if (max_mb > 0 && g_gui.pool_per_disk[i] > max_mb) g_gui.pool_per_disk[i] = max_mb;
+        ImGui::SameLine();
+        ImGui::TextDisabled("#%d %s (max %d MB)", (int)g_gui.selected_disks[i], modelA, max_mb);
+    }
+}
 
 static void ShowVolumeInfoContent(void) {
     UI_VOLUME_INFO* vi = &g_gui.vol_info;
@@ -1142,6 +1415,174 @@ static void ShowConfirmDestroy(void) {
         ImGui::SameLine();
         if (ImGui::Button("Cancel", ImVec2(120, 0))) {
             g_gui.show_confirm_destroy = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void ShowConfirmPurge(void) {
+    ImGui::OpenPopup("Confirm Purge");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Confirm Purge", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Are you sure you want to PURGE all pool files?");
+        ImGui::TextColored(ImVec4(1,0.3f,0,1), "This will remove all pool files AND the superblock.");
+        ImGui::TextUnformatted("The disk will be clean with no RAID metadata.");
+        ImGui::TextUnformatted("This action CANNOT be undone.");
+        ImGui::Separator();
+        if (ImGui::Button("Yes, Purge", ImVec2(120, 0))) {
+            start_worker(W_PURGE, NULL);
+            g_gui.show_purge_confirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            g_gui.show_purge_confirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void ShowRawBenchResults(void) {
+    if (!g_gui.show_bench_raw) return;
+    ImGui::OpenPopup("Raw Bench Results");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Raw Bench Results", &g_gui.show_bench_raw, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (g_gui.bench_raw_done) {
+            ImGui::TextUnformatted("Raw Disk Benchmark Results");
+            ImGui::Separator();
+            ImGui::Text("Average Read:  %s MB/s", g_gui.bench_raw_read);
+            ImGui::Text("Average Write: %s MB/s", g_gui.bench_raw_write);
+            ImGui::Separator();
+            if (ImGui::Button("Run Again", ImVec2(100, 0))) {
+                g_gui.bench_raw_done = false;
+                start_worker(W_BENCH, "512");
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(100, 0))) {
+                g_gui.show_bench_raw = false;
+                ImGui::CloseCurrentPopup();
+            }
+        } else {
+            ImGui::TextUnformatted("Benchmarking in progress...");
+            ImGui::ProgressBar(g_gui.progress_frac, ImVec2(250, 0), "");
+            if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+                g_gui.show_bench_raw = false;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void ShowExpandDialog(void) {
+    if (!g_gui.show_expand_dialog) return;
+    ImGui::OpenPopup("Expand RAID0 Volume");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(480, 360), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Expand RAID0 Volume", &g_gui.show_expand_dialog, ImGuiWindowFlags_NoResize)) {
+        ImGui::TextUnformatted("Select disks to add to the stripe volume:");
+        ImGui::Separator();
+        uint32_t dc = device_get_count();
+        g_gui.expand_count = 0;
+        if (ImGui::BeginChild("##expand_list", ImVec2(0, 240), true)) {
+            for (uint32_t i = 0; i < dc; i++) {
+                DISK_INFO* d = device_get(i);
+                if (!d) continue;
+                char modelA[64] = {0}; wcstombs(modelA, d->model, 63);
+                char cbid[24]; snprintf(cbid, 24, "##exp_ck%u", i);
+                bool ck = !!g_gui.expand_checks[i];
+                ImGui::Checkbox(cbid, &ck);
+                g_gui.expand_checks[i] = ck ? 1 : 0;
+                ImGui::SameLine();
+                ImGui::Text("#%u %s", i, modelA);
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 120);
+                int sz = g_gui.expand_sizes[g_gui.expand_count];
+                if (sz < 1024) sz = 51200;
+                ImGui::SetNextItemWidth(110);
+                char szid[24]; snprintf(szid, 24, "##exp_sz%u", i);
+                int max_mb = (d->pool_bytes > 0 ? (int)(d->pool_bytes / 1048576) : 102400);
+                ImGui::InputInt(szid, &sz, 1024);
+                if (sz < 1024) sz = 1024;
+                if (sz > max_mb) sz = max_mb;
+                int idx = g_gui.expand_count;
+                g_gui.expand_sizes[idx] = sz;
+                g_gui.expand_disk_ids[idx] = (int)i;
+                if (ck) g_gui.expand_count++;
+            }
+        }
+        ImGui::EndChild();
+        ImGui::Separator();
+        if (ImGui::Button("Expand", ImVec2(120, 0)) && g_gui.expand_count > 0) {
+            char p[256] = {0}; int pos = 0;
+            int idx = 0;
+            for (uint32_t i = 0; i < dc && idx < 8; i++) {
+                if (g_gui.expand_checks[i]) {
+                    pos += snprintf(p + pos, 255 - (size_t)pos, "%s%u:%d", pos ? " " : "", i, g_gui.expand_sizes[idx]);
+                    idx++;
+                }
+            }
+            g_gui.show_expand_dialog = false;
+            ImGui::CloseCurrentPopup();
+            start_worker(W_EXPAND, p);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+            g_gui.show_expand_dialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void ShowMapDialog(void) {
+    if (!g_gui.show_map_dialog) return;
+    ImGui::OpenPopup("LBA Mapping");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("LBA Mapping", &g_gui.show_map_dialog, ImGuiWindowFlags_NoResize)) {
+        if (g_gui.dialog_text[0]) {
+            ImGui::TextUnformatted("LBA-to-disk mapping:");
+            ImGui::Separator();
+            ImGui::InputTextMultiline("##map_text", g_gui.dialog_text, sizeof(g_gui.dialog_text),
+                ImVec2(-1, ImGui::GetContentRegionAvail().y - 36),
+                ImGuiInputTextFlags_ReadOnly);
+        } else {
+            ImGui::TextUnformatted("Mapping data not available.");
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(100, 0))) {
+            g_gui.show_map_dialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void ShowMetadataDialog(void) {
+    if (!g_gui.show_metadata_dialog) return;
+    ImGui::OpenPopup("Superblock Metadata");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Superblock Metadata", &g_gui.show_metadata_dialog, ImGuiWindowFlags_NoResize)) {
+        if (g_gui.dialog_text[0]) {
+            ImGui::TextUnformatted("Superblock contents:");
+            ImGui::Separator();
+            ImGui::InputTextMultiline("##meta_text", g_gui.dialog_text, sizeof(g_gui.dialog_text),
+                ImVec2(-1, ImGui::GetContentRegionAvail().y - 36),
+                ImGuiInputTextFlags_ReadOnly);
+        } else {
+            ImGui::TextUnformatted("Metadata not available.");
+        }
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(100, 0))) {
+            g_gui.show_metadata_dialog = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1296,6 +1737,38 @@ static void ShowSimulationControls(void) {
     }
 }
 
+static void ShowCacheControls(void) {
+    UI_VOLUME_INFO* vi = &g_gui.vol_info;
+    if (!vi->mounted) return;
+    ImGui::SeparatorText("Cache");
+    static int sz = 512;
+    if (vi->cache_enabled) sz = (int)vi->cache_mb;
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputInt("##cachesz", &sz, 256);
+    if (sz < 256) sz = 256;
+    ImGui::SameLine();
+    if (vi->cache_enabled) {
+        if (ImGui::SmallButton("Off")) {
+            char p[] = "off";
+            start_worker(W_CACHE, p);
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Toggle WT")) {
+            char p[] = "wt";
+            start_worker(W_CACHE, p);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("ON (%u MB)", vi->cache_mb);
+    } else {
+        if (ImGui::SmallButton("On")) {
+            char p[32]; snprintf(p, 32, "%d", sz);
+            start_worker(W_CACHE, p);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("OFF");
+    }
+}
+
 static void RenderMainUI(void) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
@@ -1321,12 +1794,14 @@ static void RenderMainUI(void) {
     float left_w = ImGui::GetContentRegionAvail().x * 0.60f;
     ImGui::BeginChild("##left", ImVec2(left_w, mid_h), true);
     ShowDiskList();
+    ShowDiskAllocation();
     ImGui::EndChild();
     ImGui::SameLine();
 
     float right_w = ImGui::GetContentRegionAvail().x;
     ImGui::BeginChild("##right", ImVec2(right_w, mid_h), true);
     ShowVolumeInfoContent();
+    ShowCacheControls();
     if (g_gui.mode == MODE_DEVELOPER) {
         ShowSimulationControls();
     }
@@ -1341,13 +1816,24 @@ static void RenderMainUI(void) {
     if (g_gui.show_settings) ShowSettings(&g_gui.show_settings);
     if (g_gui.show_about) ShowAbout(&g_gui.show_about);
     if (g_gui.show_confirm_destroy) ShowConfirmDestroy();
+    if (g_gui.show_purge_confirm) ShowConfirmPurge();
+    ShowExpandDialog();
+    ShowMapDialog();
+    ShowMetadataDialog();
     ShowBenchmark();
+    ShowRawBenchResults();
     ShowExportDialog();
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Refresh", "F5", false, !g_gui.worker_running)) start_worker(W_REFRESH, NULL);
             ImGui::Separator();
+            if (ImGui::MenuItem("Config Save", NULL, false, !g_gui.worker_running)) start_worker(W_CONFIG_SAVE, NULL);
+            if (ImGui::MenuItem("Config Load", NULL, false, !g_gui.worker_running)) start_worker(W_CONFIG_LOAD, NULL);
+            ImGui::Separator();
             if (ImGui::MenuItem("Export Diagnostic", NULL, false, !g_gui.worker_running)) start_worker(W_EXPORT, NULL);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Cleanup", NULL, false, !g_gui.worker_running)) start_worker(W_CLEANUP, NULL);
+            if (ImGui::MenuItem("Purge", NULL, false, !g_gui.worker_running)) g_gui.show_purge_confirm = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Settings", NULL, false)) g_gui.show_settings = true;
             ImGui::Separator();
@@ -1357,9 +1843,22 @@ static void RenderMainUI(void) {
         if (ImGui::BeginMenu("Actions")) {
             if (ImGui::MenuItem("Scan", NULL, false, !g_gui.worker_running)) start_worker(W_SCAN, NULL);
             bool can_create = g_gui.state_value == 1 && g_gui.selected_count >= 2 && !g_gui.worker_running;
-            if (ImGui::MenuItem("Create", NULL, false, can_create)) start_worker(W_CREATE, NULL);
+            if (ImGui::MenuItem("Create", NULL, false, can_create)) {
+                char p[256] = {0}; int pos = 0;
+                for (int i = 0; i < g_gui.selected_count && i < 4; i++) {
+                    int mb = g_gui.pool_per_disk[i] > 0 ? g_gui.pool_per_disk[i] :
+                             (g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200);
+                    pos += snprintf(p + pos, 255 - (size_t)pos, "%s%d:%d", pos ? " " : "",
+                        g_gui.selected_disks[i], mb);
+                }
+                start_worker(W_CREATE, p);
+            }
             if (ImGui::MenuItem("Mirror", NULL, false, can_create)) start_worker(W_MIRROR, NULL);
             if (ImGui::MenuItem("Restore", NULL, false, !g_gui.worker_running)) g_gui.show_restore_wizard = true;
+            ImGui::Separator();
+            if (ImGui::MenuItem("Quick Setup", NULL, false, !g_gui.worker_running)) start_worker(W_QUICK_SETUP, NULL);
+            if (ImGui::MenuItem("Health Check", NULL, false, !g_gui.worker_running)) start_worker(W_CHECK, NULL);
+            ImGui::Separator();
             bool can_mount = g_gui.state_value >= 2 && !g_gui.vol_info.mounted && !g_gui.worker_running;
             if (ImGui::MenuItem("Mount", NULL, false, can_mount)) start_worker(W_MOUNT, NULL);
             bool can_umount = g_gui.vol_info.mounted && !g_gui.worker_running;
@@ -1375,6 +1874,24 @@ static void RenderMainUI(void) {
                 start_worker(W_BENCHFS, m);
             }
             if (ImGui::MenuItem("Rebuild", NULL, false, !g_gui.worker_running)) g_gui.show_rebuild_wizard = true;
+            ImGui::Separator();
+            bool can_bench_raw = g_gui.disk_summary.selected_count >= 2 && !g_gui.worker_running;
+            if (ImGui::MenuItem("Raw Bench", NULL, false, can_bench_raw)) {
+                g_gui.show_bench_raw = true; g_gui.bench_raw_done = false;
+                g_gui.bench_raw_read[0] = 0; g_gui.bench_raw_write[0] = 0;
+                start_worker(W_BENCH, "512");
+            }
+            bool can_test = g_gui.vol_info.mounted && !g_gui.worker_running;
+            if (ImGui::MenuItem("I/O Test", NULL, false, can_test)) start_worker(W_TEST, NULL);
+            if (ImGui::MenuItem("Random Stress", NULL, false, can_test)) start_worker(W_RANDOM, NULL);
+            ImGui::Separator();
+            bool can_expand = g_gui.vol_info.mounted && !g_gui.worker_running;
+            if (ImGui::MenuItem("Expand", NULL, false, can_expand)) {
+                memset(g_gui.expand_checks, 0, sizeof(g_gui.expand_checks));
+                g_gui.show_expand_dialog = true;
+            }
+            if (ImGui::MenuItem("Map", NULL, false, can_expand)) start_worker(W_MAP, NULL);
+            if (ImGui::MenuItem("Metadata", NULL, false, !g_gui.worker_running)) start_worker(W_METADATA, NULL);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View")) {
