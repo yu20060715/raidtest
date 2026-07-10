@@ -25,6 +25,13 @@
 - W_RANDOM: removed 5× `Sleep(200)` loop (lines 768-772). Same pattern.
 - Removed unused `bench_done`, `raw_bench_done`, `random_done` goto labels.
 - Build: OK
+
+## Priority 7: Dark theme combo only showed Light
+- `ApplyTheme()` only called `SetupLightTheme()` regardless of the theme setting.
+- Added `SetupDarkTheme()` using `ImGui::StyleColorsDark()`. `ApplyTheme()` now branches on `g_gui.use_light_theme`.
+- Startup was hardcoded `use_light_theme = true` — now reads `g_gui.settings.theme` instead.
+- Default config is `THEME_DARK` (from `config_defaults`), so first run now uses dark theme as intended.
+- Build: OK
 - `W_MIRROR` directly called `raid_mirror()` → `volume_create_internal()` which opens pool files, but they were never created. Result: Mirror was entirely broken.
 - Fixed by following same pattern as `W_CREATE`: build disk:pool_size arg string from Disk Allocation panel, pass to `raid_init_pools()`, then call `raid_mirror()`.
 - Both toolbar Mirror (line 1149) and Actions menu Mirror (line 1923) now build and pass pool params.

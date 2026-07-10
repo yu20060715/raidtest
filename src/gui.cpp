@@ -908,8 +908,17 @@ static void SetupLightTheme(void) {
     s.ScrollbarRounding = 3.0f; s.GrabRounding = 3.0f; s.TabRounding = 3.0f;
 }
 
+static void SetupDarkTheme(void) {
+    ImGui::StyleColorsDark();
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowRounding = 0.0f; s.ChildRounding = 0.0f;
+    s.FrameRounding = 3.0f; s.PopupRounding = 3.0f;
+    s.ScrollbarRounding = 3.0f; s.GrabRounding = 3.0f; s.TabRounding = 3.0f;
+}
+
 static void ApplyTheme(void) {
-    SetupLightTheme();
+    if (g_gui.use_light_theme) SetupLightTheme();
+    else SetupDarkTheme();
 }
 
 static bool CreateRenderTarget(void) {
@@ -1990,7 +1999,7 @@ extern "C" int gui_run(void) {
     ImGui::CreateContext();
     config_defaults(&g_gui.settings);
     config_load(&g_gui.settings);
-    g_gui.use_light_theme = true;
+    g_gui.use_light_theme = (g_gui.settings.theme == THEME_LIGHT);
     ApplyTheme();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = NULL;
