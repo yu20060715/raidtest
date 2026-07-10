@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <process.h>
+#include <winioctl.h>
 
 #define MAX_CHUNK (64ULL * 1024 * 1024)
 
@@ -139,7 +140,7 @@ static int raid_getattr(const char* path, struct fuse_stat* stbuf) {
         EnterCriticalSection(&g_file_table_lock);
         int idx = find_open_file_locked(p);
         if (idx >= 0) {
-            stbuf->st_mode = g_open_files[idx].is_dir ? (S_IFDIR | 0755) : (S_IFREG | 0644);
+            stbuf->st_mode = g_open_files[idx].is_dir ? (S_IFDIR | 0777) : (S_IFREG | 0666);
             stbuf->st_nlink = 1;
             stbuf->st_size = (fuse_off_t)g_open_files[idx].size;
             LeaveCriticalSection(&g_file_table_lock);
@@ -150,6 +151,11 @@ static int raid_getattr(const char* path, struct fuse_stat* stbuf) {
     }
     gs_unlock();
     return -ENOENT;
+}
+
+static int raid_fgetattr(const char* path, struct fuse_stat* stbuf, struct fuse_file_info* fi) {
+    (void)fi;
+    return raid_getattr(path, stbuf);
 }
 
 static int raid_readdir(const char* path, void* buf, fuse_fill_dir_t filler, fuse_off_t offset, struct fuse_file_info* fi) {
@@ -197,6 +203,7 @@ static int raid_open(const char* path, struct fuse_file_info* fi) {
         if (idx < 0) { gs_unlock(); return -ENOENT; }
     }
     if ((fi->flags & 3) != O_RDONLY) fi->flags |= O_RDWR;
+    fi->fh = (uint64_t)(uintptr_t)strdup(p);
     gs_unlock();
     return 0;
 }
@@ -338,38 +345,25 @@ static int raid_read(const char* path, char* buf, size_t size, fuse_off_t offset
     (void)path; (void)fi;
     STRIPE_VOLUME* vol = g_ctx.vol;
     if (!vol) return -EIO;
-    if ((uint64_t)offset >= vol->virtual_total_bytes) return 0;
 
-    uint64_t end = min_u64((uint64_t)offset + (uint64_t)size, vol->virtual_total_bytes);
+    const char* p = strip_path(path);
+    file_table_lock_init();
+    EnterCriticalSection(&g_file_table_lock);
+    int idx = find_open_file_locked(p);
+    uint64_t file_size = (idx >= 0) ? g_open_files[idx].size : 0;
+    LeaveCriticalSection(&g_file_table_lock);
+
+    if ((uint64_t)offset >= file_size) return 0;
+
+    uint64_t end = min_u64((uint64_t)offset + (uint64_t)size, file_size);
     uint64_t remaining = end - (uint64_t)offset;
     uint64_t total_read = 0;
     uint64_t curr_off = (uint64_t)offset;
 
     while (remaining > 0) {
         uint64_t chunk = min_u64(remaining, MAX_CHUNK);
-        bool ok;
-
-        if (vol->cache_enabled && curr_off < vol->cache.cache_size_bytes) {
-            uint64_t cache_end = min_u64(end, vol->cache.cache_size_bytes);
-            uint64_t cache_len = min_u64(cache_end - curr_off, MAX_CHUNK);
-            if (cache_len > 0) {
-                ok = cache_read(&vol->cache, buf + total_read, curr_off, (uint32_t)cache_len);
-                if (ok) {
-                    total_read += cache_len;
-                    remaining -= cache_len;
-                    curr_off += cache_len;
-                    if (curr_off >= cache_end) {
-                        continue;
-                    }
-                } else {
-                    return (int)total_read > 0 ? (int)total_read : -EIO;
-                }
-            }
-        }
-
-        chunk = min_u64(remaining, MAX_CHUNK);
-        ok = stripe_volume_read(vol, buf + total_read, curr_off, (uint32_t)chunk);
-        if (!ok) return (int)total_read > 0 ? (int)total_read : -EIO;
+        if (!stripe_volume_read(vol, buf + total_read, curr_off, (uint32_t)chunk))
+            return (int)total_read > 0 ? (int)total_read : -EIO;
         total_read += chunk;
         remaining -= chunk;
         curr_off += chunk;
@@ -406,7 +400,7 @@ static void cache_backpressure(STRIPE_VOLUME* vol) {
 }
 
 static int raid_write(const char* path, const char* buf, size_t size, fuse_off_t offset, struct fuse_file_info* fi) {
-    (void)path; (void)fi;
+    (void)fi;
     STRIPE_VOLUME* vol = g_ctx.vol;
     if (!vol) return -EIO;
     if ((uint64_t)offset >= vol->virtual_total_bytes) return 0;
@@ -452,11 +446,24 @@ static int raid_write(const char* path, const char* buf, size_t size, fuse_off_t
         if (!ok) return (int)total_written > 0 ? (int)total_written : -EIO;
     }
 
+    const char* p = strip_path(path);
+    if (*p && total_written > 0) {
+        uint64_t write_end = (uint64_t)offset + total_written;
+        file_table_lock_init();
+        EnterCriticalSection(&g_file_table_lock);
+        int idx = find_open_file_locked(p);
+        if (idx >= 0 && write_end > g_open_files[idx].size)
+            g_open_files[idx].size = write_end;
+        LeaveCriticalSection(&g_file_table_lock);
+    }
+
     return (int)total_written;
 }
 
 static int raid_release(const char* path, struct fuse_file_info* fi) {
-    (void)path; (void)fi;
+    (void)path;
+    if (fi->fh) free((void*)(uintptr_t)fi->fh);
+    fi->fh = 0;
     return 0;
 }
 
@@ -482,6 +489,45 @@ static int raid_fsync(const char* path, int isdatasync, struct fuse_file_info* f
         }
     }
     return 0;
+}
+
+static int raid_ioctl(const char* path, int cmd, void* arg, struct fuse_file_info* fi,
+    unsigned int flags, void* data) {
+    (void)path; (void)fi; (void)flags;
+    STRIPE_VOLUME* vol = g_ctx.vol;
+    if (!vol) return -ENODEV;
+
+    uint32_t func = ((uint32_t)cmd >> 4) & 0x0FFF;
+
+    switch (func) {
+    case 0x17: { /* IOCTL_DISK_GET_LENGTH_INFO */
+        if (!data) return -EFAULT;
+        GET_LENGTH_INFORMATION gli;
+        gli.Length.QuadPart = vol->virtual_total_bytes;
+        memcpy(data, &gli, sizeof(gli));
+        return 0;
+    }
+    case 0x500: { /* IOCTL_STORAGE_QUERY_PROPERTY */
+        if (!arg || !data) return -EFAULT;
+        STORAGE_PROPERTY_QUERY* spq = (STORAGE_PROPERTY_QUERY*)arg;
+        if (spq->PropertyId != StorageDeviceProperty) return -ENOSYS;
+
+        uint32_t out_size = ((uint32_t)cmd >> 16) & 0x3FFF;
+        uint32_t sdd_size = sizeof(STORAGE_DEVICE_DESCRIPTOR);
+        if (out_size < sdd_size) sdd_size = out_size;
+        memset(data, 0, sdd_size);
+        STORAGE_DEVICE_DESCRIPTOR* sdd = (STORAGE_DEVICE_DESCRIPTOR*)data;
+        sdd->Version = sdd_size;
+        sdd->Size = sdd_size;
+        sdd->DeviceType = 0x22;           /* FILE_DEVICE_UNKNOWN */
+        sdd->RemovableMedia = FALSE;
+        sdd->CommandQueueing = TRUE;
+        sdd->BusType = 0x09;              /* BusTypeVirtual */
+        return 0;
+    }
+    default:
+        return -ENOSYS;
+    }
 }
 
 static int raid_statfs(const char* path, struct fuse_statvfs* st) {
@@ -514,6 +560,7 @@ static int raid_statfs(const char* path, struct fuse_statvfs* st) {
 
 static struct fuse_operations raid_ops = {
     .getattr  = raid_getattr,
+    .fgetattr = raid_fgetattr,
     .readdir  = raid_readdir,
     .open     = raid_open,
     .create   = raid_create,
@@ -527,6 +574,7 @@ static struct fuse_operations raid_ops = {
     .release  = raid_release,
     .flush    = raid_flush,
     .fsync    = raid_fsync,
+    .ioctl    = raid_ioctl,
     .statfs   = raid_statfs,
 };
 
@@ -557,7 +605,7 @@ bool fuse_mount_volume(STRIPE_VOLUME* vol, char drive_letter) {
     const char* fuse_argv[] = {
         "raidtest",
         "-o", "volname=RAIDTEST",
-        "-o", "FileSystemName=NTFS",
+        "-o", "FileSystemName=RAIDTEST",
         "-o", "local",
         "-o", "umask=000",
         NULL

@@ -242,6 +242,7 @@ typedef struct {
     volatile LONG cache_flush_in_progress;
     uint32_t   raid_level;
     volatile LONG healthy_count;
+    void*      worker_state;   // allocated DISK_WORKER[disk_count] in stripe_engine.c
 } STRIPE_VOLUME;
 
 typedef struct {

@@ -578,6 +578,22 @@ RC raid_benchfs(int argc, char* argv[]) {
     return RC_OK;
 }
 
+RC raid_benchraw(int argc, char* argv[]) {
+    gs_lock();
+    RC rc; if ((rc = require(STATE_MOUNTED)) != RC_OK) { gs_unlock(); return rc; }
+    uint32_t size_mb = 512, block_kb = 1024;
+    if (argc > 0 && !safe_atou32(argv[0], &size_mb)) { LOG_ERROR("Invalid size '%s'", argv[0]); gs_unlock(); return RC_ERR_INVALID_ARG; }
+    if (argc > 1 && !safe_atou32(argv[1], &block_kb)) { LOG_ERROR("Invalid block size '%s'", argv[1]); gs_unlock(); return RC_ERR_INVALID_ARG; }
+    if (size_mb < 64) size_mb = 64;
+    if (size_mb > 4096) size_mb = 4096;
+    if (block_kb < 4) block_kb = 4;
+    if (block_kb > 8192) block_kb = 8192;
+    if (block_kb > size_mb * 1024) block_kb = size_mb * 1024;
+    bench_raw_volume(&S()->vol.volume, size_mb, block_kb);
+    gs_unlock();
+    return RC_OK;
+}
+
 RC raid_simulate(int argc, char* argv[]) {
     gs_lock();
     if (S()->rt.state != STATE_MOUNTED) {

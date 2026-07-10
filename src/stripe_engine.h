@@ -12,3 +12,7 @@ bool stripe_volume_dump_mapping(const STRIPE_VOLUME* vol, uint64_t start, uint64
 bool stripe_volume_verify_io(STRIPE_VOLUME* vol);
 bool stripe_volume_random_test(STRIPE_VOLUME* vol, uint32_t operations, uint32_t max_size_kb);
 bool stripe_volume_normalize_ratios(uint32_t* speeds, uint32_t count, uint32_t* ratios, uint32_t* total_out);
+
+// Worker thread lifecycle (internal to stripe_engine, called by volume_manager)
+bool stripe_volume_workers_init(STRIPE_VOLUME* vol);
+void stripe_volume_workers_stop(STRIPE_VOLUME* vol);

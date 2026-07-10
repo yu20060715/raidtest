@@ -1,0 +1,16 @@
+[00:25:06] [OK]    Config loaded: 0 disks, cache=4096 MB, mount=R:
+[00:25:06] [INFO]  Superblock found on D:\ (generation=1)
+[00:25:06] [INFO]  Superblock found on E:\ (generation=1)
+[00:25:06] [WARN]  2 superblocks found, picking generation=1 (disk 0)
+[00:25:06] [OK]    Superblock v4 loaded from D:\ (generation=1)
+[00:25:06] [INFO]    Restored disk 0: D:\ (serial=0000_0000_0000_0000_0000_0050_1010_0548. match=no)
+[00:25:06] [INFO]    Restored disk 1: E:\ (serial=0000_0000_0000_0001_00A0_7524_49E4_7E24. match=no)
+[00:25:06] [OK]    Restored 0/2 disks by serial from v4 superblock (generation=1)
+[00:25:06] [WARN]  Incomplete journal on D:\ (gen=1, 0 ranges) — replaying...
+[00:25:06] [OK]    Journal replay OK: 0 ranges written
+[00:25:06] [WARN]  Incomplete journal on E:\ (gen=1, 0 ranges) — replaying...
+[00:25:06] [OK]    Journal replay OK: 0 ranges written
+[00:25:06] [OK]    RAIDTEST volume mounted at R:
+[00:25:06] [OK]    Mounted R: for 60 seconds. Ctrl+C to unmount early.
+[00:25:11] [INFO]  Cache flush: 1 blocks flushed, 0 batch(es) failed
+[00:25:12] [WARN]  raid_read: cache miss at offset 65536 len 4096 (end=69632 cache_sz=4294967296)

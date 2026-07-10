@@ -1,0 +1,16 @@
+[05:51:24] [OK]    Config loaded: 0 disks, cache=4096 MB, mount=R:
+[05:51:24] [INFO]  Superblock found on D:\ (generation=1)
+[05:51:24] [INFO]  Superblock found on E:\ (generation=1)
+[05:51:24] [WARN]  2 superblocks found, picking generation=1 (disk 0)
+[05:51:24] [OK]    Superblock v4 loaded from D:\ (generation=1)
+[05:51:24] [INFO]    Restored disk 0: D:\ (serial=0000_0000_0000_0000_0000_0050_1010_0548. match=no)
+[05:51:24] [INFO]    Restored disk 1: E:\ (serial=0000_0000_0000_0001_00A0_7524_49E4_7E24. match=no)
+[05:51:24] [OK]    Restored 0/2 disks by serial from v4 superblock (generation=1)
+[05:51:24] [WARN]  Incomplete journal on D:\ (gen=1, 0 ranges) — replaying...
+[05:51:24] [OK]    Journal replay OK: 0 ranges written
+[05:51:24] [WARN]  Incomplete journal on E:\ (gen=1, 0 ranges) — replaying...
+[05:51:24] [OK]    Journal replay OK: 0 ranges written
+[05:51:24] [OK]    RAIDTEST volume mounted at Z:
+[05:51:24] [OK]    Mounted Z: for 7200 seconds. Ctrl+C to unmount early.
+[07:51:24] [OK]    Goodbye!
+[07:51:29] [OK]    Unmounted Z:

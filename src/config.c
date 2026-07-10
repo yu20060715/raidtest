@@ -14,7 +14,7 @@ void config_defaults(APP_CONFIG* cfg) {
     cfg->version = 2;
     cfg->cache_mb = CACHE_DEFAULT_MB;
     cfg->pool_mb = 51200;
-    cfg->mount_letter = 'G';
+    cfg->mount_letter = 'R';
     cfg->auto_bench = true;
     cfg->theme = THEME_DARK;
     strcpy(cfg->language, "en");

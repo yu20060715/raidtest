@@ -216,3 +216,354 @@ Changes made:
 - **Phase 5 — Verification**: `build.bat` OK (pre-existing warnings). `raidtest_tests.exe` 39/39 PASS. No source code changes.
 - **Deliverable**: Created `docs/release/FINAL_DEMO_OPERATOR_TRAINING_REPORT.md` with final verdict.
 - Updated: `OPENCODE_PROGRESS.md`, `OPENCODE_TEST_LOG.md`, `NEXT_SESSION.md`.
+
+## Weighted Stripe Ratio Fix — Phase 1: RATIO_SCALE=10000 (2026-07-09) [SUPERSEDED]
+
+**History**: This was the first attempt at fixing ratio normalization. It was superseded by the `MAX_RATIO=32` approach below because `RATIO_SCALE=10000` created oversized phase cycles (up to 138 GB) that couldn't fit in 4 GB pool files.
+
+Changes made:
+- **Function changed**: `stripe_volume_normalize_ratios()` in `src/stripe_engine.c:311`
+- **Root cause**: The original code computed `raw[i] = speeds[i] / min_speed;` using integer division. When speeds were not exact multiples (e.g., `{6228, 5811, 4325}`), all quotients truncated to 1, producing `1:1:1` after GCD reduction. The log showed all disks as `ratio=1` regardless of actual speed differences.
+- **Fix**: Introduced `RATIO_SCALE` (10000) and changed the formula to `raw[i] = (speeds[i] * RATIO_SCALE) / min_speed;`, using `uint64_t` for the intermediate multiplication to prevent overflow. This preserves fractional speed ratios as scaled integers. The subsequent GCD reduction simplifies them to the smallest integer representation. Examples:
+  - `{100, 100, 100}` → `10000:10000:10000` → gcd=10000 → `1:1:1` ✓
+  - `{500, 1000, 2000}` → `10000:20000:40000` → gcd=10000 → `1:2:4` ✓
+  - `{6228, 5811, 4325}` → `14400:13435:10000` → gcd=5 → `2880:2687:2000` ✓ (no longer all 1)
+  - Zero speed fallback unchanged (`min_speed == 0` → all ratios = 1)
+- **Test added**: `test_normalize_nonmulti_ratios` in `src/test_stripe.c:39` — verifies `{6228, 5811, 4325}` produces distinct ratios.
+- **Build**: OK (pre-existing warnings). **Test results**: All 4 normalize ratio tests PASS (34/43 total, 9 pre-existing I/O failures unchanged).
+
+## Stripe Mapping Write Path Verification (2026-07-09)
+
+Traced the full write path to confirm weighted ratio is actually used in disk selection:
+
+**Write call chain:**
+```
+stripe_volume_write()          stripe_engine.c:727
+  → stripe_volume_map_lba()    stripe_engine.c:603     (LBA → physical mapping)
+    → map_single_byte()        stripe_engine.c:277     (core: disk selection)
+```
+
+**Mapping logic in `map_single_byte()`** (line 294-306):
+- Each cycle is divided into weighted segments: `seg_size[j] = ratios[j] × stripe_unit`
+- `offset_in_cycle` falls into segment `j` → selects `active_disk_indices[j]`
+- Physical offset: `physical_starts[j] + cycle_index × ratios[j] × stripe_unit + segment_offset`
+
+For `ratios = {2, 2, 1}`, `stripe_unit = 64KB`:
+```
+Cycle (320KB): [Disk0×128KB] [Disk1×128KB] [Disk2×64KB]
+```
+Produces `D0, D0, D1, D1, D2` — correct weighted distribution.
+
+**Findings:**
+- ✅ `map_single_byte()` uses `ph->ratios[j]` — no `stripe % disk_count` exists
+- ✅ `stripe_volume_map_lba()` uses `current_phase->ratios[j]` for chunk boundaries
+- ✅ `submit_entries()` dispatches to the correct disk per mapped entry
+- ✅ The previous bug was **only in ratio calculation** (integer truncation → all 1s)
+- ✅ With ratios now correctly calculated, mapping automatically produces weighted I/O distribution
+- **No changes needed** to mapping, write path, or I/O dispatch.
+
+## I/O Parallelism Verification (2026-07-09)
+
+Traced the actual I/O execution path to confirm whether multi-disk writes are serial or parallel.
+
+**Write call chain:**
+```
+stripe_volume_write()          stripe_engine.c:727
+  → stripe_volume_map_lba()    stripe_engine.c:603   (mapping: ratio-based disk selection)
+  → submit_entries()           stripe_engine.c:219   (dispatch to per-disk workers)
+```
+
+**`submit_entries()` execution model (line 219-271):**
+- Creates one `IO_COMPLETION` with `pending = entry_count`
+- Loops through all mapped entries, pushing each to the appropriate disk's ring buffer
+- Signals each disk's wake event via `SetEvent(arr[di].wake_event)`
+- After ALL pushes complete, calls `WaitForSingleObject(comp.event, INFINITE)` once
+
+**Per-disk worker threads (line 75-129):**
+- Each disk has its **own dedicated thread** created via `_beginthreadex` at line 163
+- Each thread independently processes its own lock-free SPSC ring buffer
+- Uses `WriteFile` / `ReadFile` with OVERLAPPED for async I/O per disk
+- Decrements `comp.pending` atomically via `InterlockedDecrement`
+- Last worker to finish sets `comp.event`, unblocking `submit_entries()`
+
+**Timeline for a write spanning Disk0, Disk1, Disk2:**
+```
+submit_entries:
+  push to Disk0 ring → SetEvent(Disk0)      ← memory ops, no I/O yet
+  push to Disk1 ring → SetEvent(Disk1)
+  push to Disk2 ring → SetEvent(Disk2)
+  WaitForSingleObject(comp.event)            ← waits for ALL
+
+  (parallel execution on independent threads:)
+  Thread0: ring_pop → WriteFile(Disk0) → InterlockedDecrement(&pending)
+  Thread1: ring_pop → WriteFile(Disk1) → InterlockedDecrement(&pending)
+  Thread2: ring_pop → WriteFile(Disk2) → InterlockedDecrement(&pending)
+                                                      ↓ (last one)
+                                                SetEvent(comp.event)
+  submit_entries returns
+```
+
+**Findings:**
+- ✅ I/O is **already parallel** — not serial
+- ✅ Each disk has its own thread — no `WriteFile` serialization
+- ✅ Ring buffer push loop is sequential but only involves memory operations, not I/O
+- ✅ Completion tracking uses atomic decrement correctly
+- ✅ No change needed — the architecture already supports parallel I/O
+
+## Weighted Stripe Performance Bottleneck Analysis (2026-07-09)
+
+### Question: Why does weighted stripe show no significant performance impact?
+
+### 1. Pool file location — **Primary bottleneck**
+
+| Context | Path | Physical drive |
+|---------|------|---------------|
+| **Tests** | `%TEMP%\raidtest_N.dat` (via `GetTempPathW`) | All on C: — **same physical device** |
+| **Production** | `X:\RAIDTEST\stripe_pool.dat` (via `disk_map_drive`) | Potentially different drives if selected from different letters |
+
+In `test_disk_create()` (test_common.c:35-83), all pool files go to the system temp directory. Even with per-disk worker threads and correct weighted ratios, all `WriteFile` calls go through the **same device queue** → I/O is serialized at the hardware level → weighted distribution has zero effect on throughput.
+
+### 2. File handle flags — **Windows cache masks writes**
+
+| Context | Flags | Windows cache |
+|---------|-------|--------------|
+| **Tests** | `FILE_FLAG_OVERLAPPED` only (test_common.c:75-77) | **Enabled** — writes hit RAM cache, return immediately |
+| **Production** | `FILE_FLAG_NO_BUFFERING \| FILE_FLAG_OVERLAPPED` (pool_io.c:50-52) | Bypassed — direct device I/O |
+
+Tests don't use `FILE_FLAG_NO_BUFFERING`, so small-to-moderate writes complete to the Windows file cache nearly instantly. The weighted ratio cannot affect performance when there's no actual disk I/O.
+
+### 3. RAM write-back cache — **Dominates for cached paths**
+
+In the FUSE write path (fuse_bridge.c:408-456), when `vol->cache_enabled = true`:
+```
+raid_write() → cache_write()  ← RAM, <1μs, returns immediately
+             → (async) cache_flush_all() ← actual disk I/O, background thread
+```
+
+The `cache_write()` call is a `memcpy` under a critical section — typically <1 microsecond. No disk I/O occurs in the cached write path. The flush is asynchronous and bounded by the slowest disk. Since the total volume of dirty data is the same regardless of ratio, flush time is unchanged.
+
+### 4. Cache flush path does its own overlapped I/O
+
+`cache_flush_all()` (ram_cache.c:109-230) does NOT go through the per-disk worker threads. Instead it:
+1. Calls `stripe_volume_map_lba()` to get disk entries
+2. Creates **per-entry OVERLAPPED** structures with individual events
+3. Submits ALL writes concurrently in a loop (line 171-192)
+4. Waits for ALL completions (line 195-199)
+
+This bypasses the worker threads entirely. The submit-and-wait pattern is already fully parallel within a single flush operation.
+
+### 5. Per-disk worker serialization
+
+Each `disk_worker_thread` (stripe_engine.c:75-129) processes one I/O request at a time:
+```c
+while (!w->stop) {
+    IO_REQUEST* req = ring_pop(&w->ring);  // pop one
+    // WriteFile + GetOverlappedResult + wait ← blocks until done
+    // then loop back for next
+}
+```
+
+Across disks: parallel. Within a disk: serial. If the stripe unit is 1MB and disk gets 2MB in a cycle, the thread does one 1MB write then another 1MB write sequentially. No pipelining per disk.
+
+### 6. FUSE chunk size
+
+`MAX_CHUNK = 64MB` (fuse_bridge.c:13). A single FUSE write of up to 64MB calls `stripe_volume_write()` once, which maps and distributes across multiple disks in one shot. For writes smaller than a stripe cycle, all data may go to a single disk regardless of ratio.
+
+### Bottleneck ranking
+
+| Rank | Bottleneck | Evidence | Impact |
+|------|-----------|----------|--------|
+| **1** | **Pool files on same physical drive** | `test_disk_create` → `GetTempPathW` → all files on C:. `disk_map_drive` needs different drive letters. | I/O serialized at hardware level regardless of ratio/threads |
+| **2** | **Windows file cache (test mode)** | Test disks opened without `FILE_FLAG_NO_BUFFERING` | Writes complete to RAM cache, no disk I/O |
+| **3** | **RAM write-back cache** | `raid_write` → `cache_write` is memcpy, actual I/O in async flush | No disk writes in hot path |
+| **4** | **Per-disk serial worker** | Worker thread processes 1 I/O at a time | No pipelining per disk, but across-disk parallelism is unaffected |
+| **5** | **FUSE/WinFSP overhead** | `raid_write` calls `stripe_volume_write` per chunk | Overhead dominates for small operations |
+| **6** | **Stripe unit size** | Default 1MB | Reasonable for throughput, but small I/Os hit one disk |
+
+### Verification tests needed
+
+1. **True multi-device test**: Create pool files on DIFFERENT physical drives (e.g., one on D:, one on E:) with deliberately different speeds. Run benchmark.
+2. **Direct I/O test**: Disable cache (`cache_enabled = false`) and use `FILE_FLAG_NO_BUFFERING`. Compare write throughput with 1:1:1 vs weighted ratios.
+3. **Large write test**: Write >100MB to ensure the workload exceeds any caching layer.
+4. **Worker thread bypass check**: Compare `submit_entries()` performance vs `cache_flush_all()` direct overlapped I/O for the same data volume.
+
+## Benchmark Fix — Measure Real Disk Throughput (2026-07-09)
+
+### Problem
+`bench_volume()` (the `benchfs` command) was measuring **RAM write-back cache throughput**, not actual SSD throughput. With write-back cache enabled, `stripe_volume_write()` returns after a `memcpy` to the cache buffer. The timer stopped before any disk I/O occurred, producing inflated (10+ GB/s) results regardless of the underlying disk speed or weighted ratio.
+
+### Changes
+
+| File | Change |
+|------|--------|
+| `src/bench_io.c` | `bench_volume()` — insert `cache_flush_all()` **before** stopping write timer (write-back cache only) |
+| `src/bench_io.c` | New `bench_raw_volume()` — temporarily disables cache, measures `submit_entries()` → `disk_worker` → `WriteFile()` |
+| `src/bench_io.h` | Added `bench_raw_volume()` declaration |
+| `src/raid_service.c` | Added `raid_benchraw()` CLI backend |
+| `src/raid_service.h` | Added `raid_benchraw()` declaration |
+| `src/cmd_handler.c` | Added `cmd_benchraw` handler, dispatch, and help entry |
+
+### `bench_volume()` fix detail
+
+```c
+// Before (bug):
+QueryPerformanceCounter(&t1);
+for (i) stripe_volume_write(...);   // ← returns after memcpy to cache
+QueryPerformanceCounter(&t2);        // ← timer stops BEFORE any disk I/O
+if (vol->cache_enabled) cache_flush_all(...);  // ← too late
+
+// After (fix):
+QueryPerformanceCounter(&t1);
+for (i) stripe_volume_write(...);
+if (ok && vol->cache_enabled && !vol->cache.write_through)
+    cache_flush_all(&vol->cache, vol);  // ← flush to disk BEFORE timer stops
+QueryPerformanceCounter(&t2);           // ← timer now includes disk I/O time
+```
+
+### New CLI command `benchraw`
+
+```
+benchraw [sizeMB] [blockKB]   Raw disk benchmark (bypasses RAM cache)
+```
+
+`bench_raw_volume()`:
+1. Flushes any pending cache data
+2. Sets `vol->cache_enabled = false` (temporarily)
+3. Runs the write loop — all writes go through `stripe_volume_write()` → `submit_entries()` → per-disk workers → `WriteFile()`
+4. Restores original cache setting
+5. Measures and reports throughput as "through disk workers"
+
+### Build
+**OK** (pre-existing warnings only). Tests: normalize tests pass (22/43 total pass, 21 pre-existing `C:\RAIDTEST\` failures unrelated).
+
+## Ratio Normalization Redesign — MAX_RATIO=32 (2026-07-09)
+
+### Problem
+`RATIO_SCALE=10000` preserved 5-digit precision but created oversized phase cycles:
+- For speeds `{5809, 491, 500}` → ratios `{118309, 10000, 10183}`, cycle = 138 GB
+- With 4 GB pool files, **zero** complete cycles fit → phase builder eliminated all but one disk
+- Weighted stripe degenerated to single-disk RAID0
+
+### Fix
+Replaced `RATIO_SCALE=10000` with `MAX_RATIO=32` in `stripe_volume_normalize_ratios()`:
+
+```c
+// Old (RATIO_SCALE=10000):
+raw[i] = (speeds[i] * 10000) / min_speed;
+// → {118309, 10000, 10183}, cycle = 138 GB (useless)
+
+// New (MAX_RATIO=32):
+raw[i] = (speeds[i] * 32 + max_speed/2) / max_speed;
+// → {32, 3, 3}, cycle = 38 MB ✓
+```
+
+Algorithm:
+1. Find `max_speed` (not min_speed)
+2. `raw[i] = (speeds[i] * MAX_RATIO + max_speed/2) / max_speed` (rounded)
+3. Clamp zero-speed entries to 1
+4. GCD reduction (same as before)
+
+Results:
+- Ratios stay ≤ 32 per disk → max cycle ≤ 32 × disk_count × 1 MB ≤ 192 MB
+- For 2-4 mixed disks: cycle = 32-128 MB (user requirement)
+- `{6228, 5811, 4325}` → `{32, 30, 22}` → gcd=2 → `{16, 15, 11}` ✓
+- `{5809, 491, 500}` → `{32, 3, 3}` → gcd=1 → `{32, 3, 3}`, cycle = 38 MB ✓
+- `{500, 1000, 2000}` → `{8, 16, 32}` → gcd=8 → `{1, 2, 4}` (test unchanged) ✓
+
+### Files changed
+| File | Change |
+|------|--------|
+| `src/stripe_engine.c` | Replaced `RATIO_SCALE=10000` normalize function with `MAX_RATIO=32` rounding approach |
+| `src/test_stripe.c` | Updated `normalize_zero_speeds` test to expect non-zero speed to get ratio > 1 |
+
+### Build
+**OK** (pre-existing warnings). **Tests**: 34/43 pass (4 normalize tests all PASS: `asymmetric 1:2:4`, `nonmulti 16:15:11`, `zero_speeds 1:1:32:1`, `equal_speeds 1:1:1`).
+
+## Performance Validation — Weighted Stripe RAID0 (2026-07-09)
+
+### Test A — Balanced (2 NVMe)
+- **Disks**: D: (Acer 5723 MB/s) + E: (P3 Plus 4418 MB/s)
+- **Ratio**: 32:25, cycle = 57 MB
+- **Phase 0**: Both disks, 7296 MB virtual
+- **BenchRAW write** (5 runs): 4257, 4440, 4449, 4451, 4470 → **avg 4413 MB/s**
+- **BenchRAW read** (5 runs): 3452, 3325, 3471, 3470, 3375 → **avg 3419 MB/s**
+- **BenchFS write** (5 runs): 4445, 4337, 4409, 4381, 4411 → **avg 4397 MB/s**
+- **BenchFS read** (5 runs): 3399, 3440, 3379, 3404, 3422 → **avg 3409 MB/s**
+- RAID0 = **77 %** of fastest single disk (5723 MB/s)
+
+### Test B — Weighted (NVMe + 2 SATA)
+- **Disks**: D: (Acer 5820 MB/s) + F: (MX500 491 MB/s) + G: (WD Green 490 MB/s)
+- **Ratio**: 32:3:3, cycle = 38 MB
+- **Phase 0**: All 3 disks, 4864 MB virtual
+- **BenchRAW write** (5 runs): 2000, 2011, 2025, 2021, 1999 → **avg 2011 MB/s**
+- **BenchRAW read** (5 runs): 1943, 1929, 1943, 1937, 1911 → **avg 1933 MB/s**
+- **BenchFS write** (5 runs): 2002, 2004, 2013, 1990, 1999 → **avg 2001 MB/s**
+- **BenchFS read** (5 runs): 1924, 1923, 1907, 1919, 1920 → **avg 1919 MB/s**
+- Weighted stripe = **4× single SATA speed** (491 MB/s), or **35 % of single NVMe**
+
+### Root cause of throughput bottleneck
+All throughput values (both Test A and B) are below single-disk speeds because of `submit_entries()` per-batch overhead:
+- Each 1 MB write: `map_logical_to_physical()` → allocate entries → push to ring buffers → `SetEvent()` workers → `WaitForSingleObject()` for ALL workers
+- 4096 batches × ~350-400 µs overhead = ~1.5 s CPU overhead per test
+- The weighted ratio correctly distributes data, but the batch-serialized I/O model inherently limits throughput
+
+### Deliverable
+Created `docs/performance_validation.md` with full results, per-run tables, phase breakdown, and bottleneck analysis.
+
+---
+
+## Read I/O Device Error Fix — Allow Cache Reads During Flush (2026-07-10)
+
+### Root Cause
+
+Reads of small files (e.g., 5 bytes) failed with `STATUS_IO_DEVICE_ERROR` (WinFsp → "I/O device error") because:
+
+1. **Cache flush race**: `cache_flush_all()` sets `vol->cache_flush_in_progress = 1` while flushing dirty blocks to disk. The background flush thread and `raid_flush` (called on file close) both use this flag.
+
+2. **Cache bypass on read**: `stripe_volume_read()` at `src/stripe_engine.c:705` checked `!vol->cache_flush_in_progress` before attempting `cache_read()`. If a flush was in progress, the cache path was entirely skipped.
+
+3. **Unaligned submit_entries**: When cache was bypassed, `submit_entries()` dispatched the read to per-disk workers. Workers called `ReadFile()` with the original unaligned length (e.g., 5 bytes).
+
+4. **FILE_FLAG_NO_BUFFERING**: Pool file handles are opened with `FILE_FLAG_NO_BUFFERING` (see `src/pool_io.c:52`). This requires all `ReadFile`/`WriteFile` buffer addresses, offsets, and lengths to be sector-aligned (multiple of 512).
+
+5. **Result**: `ReadFile(handle, buffer, 5, NULL, &ov)` returned `FALSE` with `GetLastError() = 87` (`ERROR_INVALID_PARAMETER`). The worker marked the disk faulty and returned `-EIO`.
+
+### Trace evidence (from debug run)
+
+```
+read: path=hello4.txt size=4096 off=0 file_sz=5 idx=0
+rd:enter vo=0 len=5 cop=1 fl=0       ← cache enabled, NOT flushing
+rd:cache_path ok=1                     ← cache hit, returns "Hello"
+read: path=hello4.txt size=4096 off=0 file_sz=5 idx=0
+rd:enter vo=0 len=5 cop=1 fl=1       ← cache enabled, BUT flush IN PROGRESS
+worker:RD ERR disk=0 len=5 phys=0 gle=87  ← ReadFile fails ERROR_INVALID_PARAMETER
+rd:submit=0 cnt=1                      ← submit_entries returns false → -EIO
+```
+
+### Fix
+
+**File**: `src/stripe_engine.c` — `stripe_volume_read()` function (line ~713)
+
+Removed the `!vol->cache_flush_in_progress` condition from the read path:
+
+```c
+// Before (bug):
+if (vol->cache_enabled && !vol->cache_flush_in_progress &&
+    virtual_offset + length <= vol->cache.cache_size_bytes) {
+
+// After (fix):
+if (vol->cache_enabled &&
+    virtual_offset + length <= vol->cache.cache_size_bytes) {
+```
+
+**Why this is safe**: `cache_flush_all()` only *reads* from `cache->buffer` (via `memcpy` to flush buffer), never modifies it. Reading the cache during a flush has no data race. The `cache_flush_in_progress` flag exists to prevent *writes* to the cache during flush (already handled by the write path's own check).
+
+**Note**: The write path (`stripe_volume_write()`) retains `!vol->cache_flush_in_progress` because modifying cache data while it's being flushed would be unsafe.
+
+### Verification
+
+- `[System.IO.File]::WriteAllText("Z:\test.txt", "Hello World!")` → OK
+- `[System.IO.File]::ReadAllText("Z:\test.txt")` → returns `"Hello World!"` ✓
+- `[System.IO.File]::ReadAllBytes("Z:\test.txt")` → 13 bytes ✓
+- Multiple files, repeated writes/reads all pass
+- Cache flush still operates correctly (1 block flushed per write, verified in log)

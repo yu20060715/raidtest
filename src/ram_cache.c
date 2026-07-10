@@ -100,6 +100,12 @@ void cache_invalidate(RAM_CACHE* cache, uint64_t offset, uint32_t length) {
     LeaveCriticalSection(&cache->lock);
 }
 
+void cache_flush_wait(STRIPE_VOLUME* vol) {
+    if (!vol) return;
+    while (InterlockedCompareExchange(&vol->cache_flush_in_progress, 0, 0) != 0)
+        Sleep(1);
+}
+
 void cache_flush_all(RAM_CACHE* cache, STRIPE_VOLUME* vol) {
     if (!cache || !vol) return;
     /* Re-entrancy guard: if another thread is already flushing, skip */
@@ -151,8 +157,6 @@ void cache_flush_all(RAM_CACHE* cache, STRIPE_VOLUME* vol) {
             continue;
         }
 
-        for (uint32_t i = b; i < b + run; i++)
-            cache->dirty_map[i / 8] &= ~(1 << (i % 8));
         LeaveCriticalSection(&cache->lock);
 
         IO_MAPPING_ENTRY entries[MAX_IO_ENTRIES];
@@ -194,41 +198,20 @@ void cache_flush_all(RAM_CACHE* cache, STRIPE_VOLUME* vol) {
                     CloseHandle(events[e]);
                 }
                 if (ok) {
-                    /* Blocks may have been re-dirtied by concurrent cache_write during I/O */
+                    /* Write succeeded — clear dirty bits */
                     EnterCriticalSection(&cache->lock);
-                    uint32_t first_redirty = UINT32_MAX;
-                    for (uint32_t i = b; i < b + run && i < cache->block_count; i++) {
-                        if (cache->dirty_map[i / 8] & (1 << (i % 8))) {
-                            first_redirty = i;
-                            break;
-                        }
-                    }
+                    for (uint32_t i = b; i < b + run && i < cache->block_count; i++)
+                        cache->dirty_map[i / 8] &= ~(1 << (i % 8));
                     LeaveCriticalSection(&cache->lock);
-                    if (first_redirty != UINT32_MAX) {
-                        b = first_redirty;
-                        continue;
-                    }
                 } else {
-                    EnterCriticalSection(&cache->lock);
-                    for (uint32_t i = b; i < b + run; i++)
-                        cache->dirty_map[i / 8] |= (1 << (i % 8));
-                    LeaveCriticalSection(&cache->lock);
                     failed++;
                 }
             } else {
-                EnterCriticalSection(&cache->lock);
-                for (uint32_t i = b; i < b + run; i++)
-                    cache->dirty_map[i / 8] |= (1 << (i % 8));
-                LeaveCriticalSection(&cache->lock);
                 for (uint32_t e = 0; e < entry_count; e++)
                     if (events[e]) { CancelIoEx(vol->disks[entries[e].disk_index]->handle, &ovs[e]); CloseHandle(events[e]); }
                 failed++;
             }
         } else {
-            EnterCriticalSection(&cache->lock);
-            for (uint32_t i = b; i < b + run; i++)
-                cache->dirty_map[i / 8] |= (1 << (i % 8));
-            LeaveCriticalSection(&cache->lock);
             failed++;
         }
 

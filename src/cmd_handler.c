@@ -92,6 +92,8 @@ RC cmd_status(void) { return raid_status(); }
 
 static RC cmd_benchfs(int argc, char* argv[]) { return raid_benchfs(argc, argv); }
 
+static RC cmd_benchraw(int argc, char* argv[]) { return raid_benchraw(argc, argv); }
+
 static RC cmd_wizard(void) { return raid_wizard(); }
 
 static RC cmd_config_save(void) { return raid_config_save(); }
@@ -121,6 +123,7 @@ static void cmd_help(void) {
     printf("    purge                        Delete pool files + superblock (irreversible)\n");
     printf("    test                         Run I/O verification (write + read + verify)\n");
     printf("    benchfs [sizeMB] [blockKB]   Filesystem-level benchmark (like CrystalDiskMark)\n");
+    printf("    benchraw [sizeMB] [blockKB]  Raw disk benchmark (bypasses RAM cache)\n");
     printf("    cleanup                      Release all RAID resources\n");
     printf("    wizard                       Guided 8-step setup wizard\n");
     printf("    config-save                  Save current configuration to JSON\n");
@@ -259,6 +262,7 @@ bool cmd_process(const char* input) {
     else if (strcmp(args[0], "test") == 0) rc = cmd_test();
     else if (strcmp(args[0], "random") == 0) rc = cmd_random(argc - 1, args + 1);
     else if (strcmp(args[0], "benchfs") == 0) rc = cmd_benchfs(argc - 1, args + 1);
+    else if (strcmp(args[0], "benchraw") == 0) rc = cmd_benchraw(argc - 1, args + 1);
     else if (strcmp(args[0], "check") == 0) rc = cmd_check(argc - 1, args + 1);
     else if (strcmp(args[0], "info") == 0) rc = cmd_info();
     else if (strcmp(args[0], "map") == 0) rc = cmd_map();

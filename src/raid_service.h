@@ -41,6 +41,7 @@ RC raid_map(void);
 RC raid_test(void);
 RC raid_random(int argc, char** args);
 RC raid_benchfs(int argc, char* argv[]);
+RC raid_benchraw(int argc, char* argv[]);
 RC raid_check(void);
 RC raid_simulate(int argc, char* argv[]);
 RC raid_metadata(int argc, char* argv[]);

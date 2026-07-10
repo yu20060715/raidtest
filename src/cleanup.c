@@ -23,6 +23,9 @@ void cleanup_volume_cache(STRIPE_VOLUME* vol) {
     /* No re-entrancy race: flush thread is done, so cache_flush_all runs.
        Flush any remaining dirty data to disk. */
     cache_flush_all(&vol->cache, vol);
+    /* Wait for any concurrent cache_flush_all (from FUSE callbacks) to finish
+       before freeing cache memory. */
+    cache_flush_wait(vol);
     /* Destroy cache resources — flush_thread handle is NULL so cache_destroy
        skips the WaitForSingleObject/CloseHandle internally. */
     cache_destroy(&vol->cache);

@@ -18,9 +18,9 @@ static bool test_normalize_zero_speeds(void) {
     uint32_t speeds[] = {0, 0, 100, 0};
     uint32_t ratios[4], total;
     ASSERT(stripe_volume_normalize_ratios(speeds, 4, ratios, &total), "normalize failed");
-    ASSERT_EQ(total, 4, "total_ratio wrong");
-    ASSERT_EQ(ratios[0], 1, "ratio[0] wrong");
-    printf("  PASS: normalize_zero_speeds\n");
+    ASSERT(ratios[0] == 1, "ratio[0] wrong");
+    ASSERT(ratios[2] > 1, "non-zero speed must get ratio > 1");
+    printf("  PASS: normalize_zero_speeds (%u:%u:%u:%u)\n", ratios[0], ratios[1], ratios[2], ratios[3]);
     return true;
 }
 
@@ -33,6 +33,16 @@ static bool test_normalize_asymmetric(void) {
     ASSERT_EQ(ratios[2], 4, "ratio[2]");
     ASSERT_EQ(total, 7, "total");
     printf("  PASS: normalize_asymmetric\n");
+    return true;
+}
+
+static bool test_normalize_nonmulti_ratios(void) {
+    uint32_t speeds[] = {6228, 5811, 4325};
+    uint32_t ratios[3], total;
+    ASSERT(stripe_volume_normalize_ratios(speeds, 3, ratios, &total), "normalize failed");
+    ASSERT(ratios[0] != ratios[1] || ratios[1] != ratios[2], "non-multiple speeds must not all be equal");
+    ASSERT(ratios[0] > 0 && ratios[1] > 0 && ratios[2] > 0, "all ratios must be positive");
+    printf("  PASS: normalize_nonmulti_ratios (%u:%u:%u)\n", ratios[0], ratios[1], ratios[2]);
     return true;
 }
 
@@ -194,6 +204,7 @@ static bool test_stripe_expand_with_cache(void) {
 TEST(stripe_normalize_equal_speeds)    { return test_normalize_equal_speeds(); }
 TEST(stripe_normalize_zero_speeds)     { return test_normalize_zero_speeds(); }
 TEST(stripe_normalize_asymmetric)      { return test_normalize_asymmetric(); }
+TEST(stripe_normalize_nonmulti_ratios) { return test_normalize_nonmulti_ratios(); }
 TEST(stripe_create_2disks)             { return test_stripe_create_2disks(); }
 TEST(stripe_create_3disks_asymmetric)  { return test_stripe_create_3disks_asymmetric(); }
 TEST(stripe_map_single_phase)          { return test_stripe_map_single_phase(); }

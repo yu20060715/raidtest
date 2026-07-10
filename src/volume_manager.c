@@ -42,6 +42,13 @@ static bool volume_create_internal(STRIPE_VOLUME* vol, DISK_INFO** disks,
         for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
         return false;
     }
+    if (vol->raid_level == RAID_LEVEL_STRIPE) {
+        if (!stripe_volume_workers_init(vol)) {
+            LOG_ERROR("Failed to start per-disk worker threads");
+            for (uint32_t j = 0; j < opened; j++) pool_file_close(disks[j]);
+            return false;
+        }
+    }
     volume_gen_uuid(vol);
     if (!metadata_write(vol))
         LOG_WARN("Superblock write failed — volume is volatile");

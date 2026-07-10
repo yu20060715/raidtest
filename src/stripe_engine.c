@@ -4,6 +4,276 @@
 #include "ram_cache.h"
 #include "profiler.h"
 
+/* ===================================================================
+ * Internal types — per-disk worker threads with lock-free SPSC ring
+ * =================================================================== */
+
+#define IO_RING_SIZE 64
+
+typedef enum { IO_OP_READ = 0, IO_OP_WRITE } IO_OP_TYPE;
+
+typedef struct IO_COMPLETION IO_COMPLETION;
+struct IO_COMPLETION {
+    volatile LONG pending;
+    bool          error;
+    HANDLE        event;
+};
+
+typedef struct {
+    IO_OP_TYPE    op;
+    void*         buffer;
+    uint64_t      physical_offset;
+    uint32_t      length;
+    IO_COMPLETION*completion;
+} IO_REQUEST;
+
+typedef struct {
+    IO_REQUEST    entries[IO_RING_SIZE];
+    volatile LONG write_seq;
+    volatile LONG read_seq;
+} IO_RING;
+
+typedef struct {
+    HANDLE        thread;
+    HANDLE        wake_event;
+    HANDLE        io_event;
+    CRITICAL_SECTION push_lock;  // protects ring_push from concurrent callers
+    DISK_INFO*    disk;
+    IO_RING       ring;
+    OVERLAPPED    ov;
+    volatile bool stop;
+    uint32_t      disk_index;
+} DISK_WORKER;
+
+/* ---- Multi-producer ring buffer operations ----------------------- */
+
+static bool ring_push(DISK_WORKER* w, const IO_REQUEST* req) {
+    IO_RING* ring = &w->ring;
+    EnterCriticalSection(&w->push_lock);
+    LONG ws = ring->write_seq;
+    LONG rs = ring->read_seq;
+    bool ok = (ws - rs < IO_RING_SIZE);
+    if (ok) {
+        ring->entries[ws & (IO_RING_SIZE - 1)] = *req;
+        ring->write_seq = ws + 1;
+    }
+    LeaveCriticalSection(&w->push_lock);
+    return ok;
+}
+
+static IO_REQUEST* ring_pop(IO_RING* ring) {
+    LONG rs = ring->read_seq;
+    if (ring->write_seq == rs) return NULL;
+    LONG slot = rs & (IO_RING_SIZE - 1);
+    IO_REQUEST* req = &ring->entries[slot];
+    ring->read_seq = rs + 1;
+    return req;
+}
+
+/* ---- Per-disk worker thread -------------------------------------- */
+
+static unsigned int __stdcall disk_worker_thread(void* arg) {
+    DISK_WORKER* w = (DISK_WORKER*)arg;
+    DWORD transferred;
+
+    while (!w->stop) {
+        IO_REQUEST* req = ring_pop(&w->ring);
+        if (!req) {
+            WaitForSingleObject(w->wake_event, 100);
+            continue;
+        }
+
+        w->ov.Offset     = (DWORD)(req->physical_offset & 0xFFFFFFFF);
+        w->ov.OffsetHigh = (DWORD)((req->physical_offset >> 32) & 0xFFFFFFFF);
+        w->ov.hEvent     = w->io_event;
+
+        BOOL ok;
+        if (req->op == IO_OP_WRITE) {
+            ok = WriteFile(w->disk->handle, req->buffer, req->length, NULL, &w->ov);
+        } else {
+            ok = ReadFile(w->disk->handle, req->buffer, req->length, NULL, &w->ov);
+        }
+
+        if (!ok) {
+            if (GetLastError() != ERROR_IO_PENDING) {
+                InterlockedExchange(&w->disk->faulty, 1);
+                InterlockedExchange(&w->disk->healthy, 0);
+                if (req->completion) {
+                    req->completion->error = true;
+                    if (InterlockedDecrement(&req->completion->pending) == 0)
+                        SetEvent(req->completion->event);
+                }
+                continue;
+            }
+            ok = GetOverlappedResult(w->disk->handle, &w->ov, &transferred, TRUE);
+        }
+
+        if (!ok) {
+            InterlockedExchange(&w->disk->faulty, 1);
+            InterlockedExchange(&w->disk->healthy, 0);
+            if (req->completion) {
+                req->completion->error = true;
+                if (InterlockedDecrement(&req->completion->pending) == 0)
+                    SetEvent(req->completion->event);
+            }
+            continue;
+        }
+
+        if (req->completion) {
+            if (InterlockedDecrement(&req->completion->pending) == 0)
+                SetEvent(req->completion->event);
+        }
+    }
+
+    return 0;
+}
+
+/* ---- Worker lifecycle -------------------------------------------- */
+
+bool stripe_volume_workers_init(STRIPE_VOLUME* vol) {
+    if (!vol || vol->disk_count == 0) return false;
+
+    DISK_WORKER* arr = (DISK_WORKER*)calloc(vol->disk_count, sizeof(DISK_WORKER));
+    if (!arr) return false;
+
+    for (uint32_t i = 0; i < vol->disk_count; i++) {
+        DISK_WORKER* w = &arr[i];
+        w->disk        = vol->disks[i];
+        w->disk_index  = i;
+        InitializeCriticalSection(&w->push_lock);
+        w->wake_event  = CreateEventW(NULL, FALSE, FALSE, NULL);
+        w->io_event    = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (!w->wake_event || !w->io_event) {
+            LOG_ERROR("Worker %u: event creation failed", i);
+            DeleteCriticalSection(&w->push_lock);
+            if (w->wake_event) CloseHandle(w->wake_event);
+            if (w->io_event)   CloseHandle(w->io_event);
+            for (uint32_t j = 0; j < i; j++) {
+                arr[j].stop = true;
+                SetEvent(arr[j].wake_event);
+                WaitForSingleObject(arr[j].thread, INFINITE);
+                CloseHandle(arr[j].thread);
+                DeleteCriticalSection(&arr[j].push_lock);
+                CloseHandle(arr[j].wake_event);
+                CloseHandle(arr[j].io_event);
+            }
+            free(arr);
+            return false;
+        }
+        w->thread = (HANDLE)_beginthreadex(NULL, 0, disk_worker_thread, w,
+                                           0, NULL);
+        if (!w->thread) {
+            LOG_ERROR("Worker %u: thread creation failed", i);
+            DeleteCriticalSection(&w->push_lock);
+            CloseHandle(w->wake_event);
+            CloseHandle(w->io_event);
+            for (uint32_t j = 0; j < i; j++) {
+                arr[j].stop = true;
+                SetEvent(arr[j].wake_event);
+                WaitForSingleObject(arr[j].thread, INFINITE);
+                CloseHandle(arr[j].thread);
+                DeleteCriticalSection(&arr[j].push_lock);
+                CloseHandle(arr[j].wake_event);
+                CloseHandle(arr[j].io_event);
+            }
+            free(arr);
+            return false;
+        }
+    }
+
+    vol->worker_state = arr;
+    return true;
+}
+
+void stripe_volume_workers_stop(STRIPE_VOLUME* vol) {
+    if (!vol || !vol->worker_state) return;
+    DISK_WORKER* arr = (DISK_WORKER*)vol->worker_state;
+
+    for (uint32_t i = 0; i < vol->disk_count; i++) {
+        arr[i].stop = true;
+        SetEvent(arr[i].wake_event);
+    }
+    for (uint32_t i = 0; i < vol->disk_count; i++) {
+        if (arr[i].thread) {
+            WaitForSingleObject(arr[i].thread, INFINITE);
+            CloseHandle(arr[i].thread);
+        }
+        DeleteCriticalSection(&arr[i].push_lock);
+        if (arr[i].wake_event) CloseHandle(arr[i].wake_event);
+        if (arr[i].io_event)   CloseHandle(arr[i].io_event);
+    }
+
+    free(arr);
+    vol->worker_state = NULL;
+}
+
+/* ---- Submit mapped entries to per-disk workers and wait ---------- */
+
+typedef struct {
+    uint64_t buffer_offset;
+    uint32_t disk_index;
+    uint64_t physical_offset;
+    uint32_t length;
+} SUBMIT_ENTRY;
+
+static bool submit_entries(STRIPE_VOLUME* vol,
+                           const IO_MAPPING_ENTRY* entries,
+                           uint32_t entry_count,
+                           const uint8_t* buffer,
+                           IO_OP_TYPE op) {
+    if (entry_count == 0) return true;
+    if (!vol->worker_state) return false;
+
+    DISK_WORKER* arr = (DISK_WORKER*)vol->worker_state;
+
+    IO_COMPLETION comp;
+    comp.pending = (LONG)entry_count;
+    comp.error   = false;
+    comp.event   = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (!comp.event) return false;
+
+    /* Pre‑compute cumulative buffer offsets for each entry */
+    SUBMIT_ENTRY se[IO_RING_SIZE];
+    uint64_t cum = 0;
+    for (uint32_t i = 0; i < entry_count; i++) {
+        se[i].buffer_offset   = cum;
+        se[i].disk_index      = entries[i].disk_index;
+        se[i].physical_offset = entries[i].physical_offset;
+        se[i].length          = entries[i].length_bytes;
+        cum                  += entries[i].length_bytes;
+    }
+
+    /* Push all entries to their respective disk rings */
+    for (uint32_t i = 0; i < entry_count; i++) {
+        uint32_t di = se[i].disk_index;
+        if (di >= vol->disk_count) {
+            comp.error = true;
+            InterlockedDecrement(&comp.pending);
+            continue;
+        }
+
+        IO_REQUEST req;
+        req.op              = op;
+        req.buffer          = (void*)(buffer + se[i].buffer_offset);
+        req.physical_offset = se[i].physical_offset;
+        req.length          = se[i].length;
+        req.completion      = &comp;
+
+        while (!ring_push(&arr[di], &req)) Sleep(0);
+        SetEvent(arr[di].wake_event);
+    }
+
+    /* Wait for all workers to finish */
+    WaitForSingleObject(comp.event, INFINITE);
+    CloseHandle(comp.event);
+
+    return !comp.error;
+}
+
+/* ===================================================================
+ * Existing stripe_engine functions (unchanged except destroy/write/read)
+ * =================================================================== */
+
 static bool map_single_byte(const STRIPE_VOLUME* vol, uint64_t virtual_offset,
                              uint32_t* out_disk_idx, uint64_t* out_phys_offset) {
     if (virtual_offset >= vol->virtual_total_bytes) return false;
@@ -38,20 +308,23 @@ static bool map_single_byte(const STRIPE_VOLUME* vol, uint64_t virtual_offset,
     return false;
 }
 
+#define MAX_RATIO 32u
+
 bool stripe_volume_normalize_ratios(uint32_t* speeds, uint32_t count, uint32_t* ratios, uint32_t* total_out) {
     if (!speeds || count == 0 || !ratios) return false;
-    uint32_t min_speed = speeds[0];
+
+    uint32_t max_speed = speeds[0];
     for (uint32_t i = 1; i < count; i++)
-        if (speeds[i] < min_speed) min_speed = speeds[i];
-    if (min_speed == 0) { for (uint32_t i = 0; i < count; i++) ratios[i] = 1; *total_out = count; return true; }
+        if (speeds[i] > max_speed) max_speed = speeds[i];
+    if (max_speed == 0) { for (uint32_t i = 0; i < count; i++) ratios[i] = 1; *total_out = count; return true; }
 
     uint32_t raw[MAX_DISKS];
-    uint32_t max_raw = 0;
+    uint64_t half = (uint64_t)max_speed / 2;
     for (uint32_t i = 0; i < count; i++) {
-        raw[i] = speeds[i] / min_speed;
-        if (raw[i] > max_raw) max_raw = raw[i];
+        uint64_t num = (uint64_t)speeds[i] * MAX_RATIO + half;
+        raw[i] = (uint32_t)(num / max_speed);
+        if (raw[i] == 0) raw[i] = 1;
     }
-    if (max_raw == 0) { for (uint32_t i = 0; i < count; i++) ratios[i] = 1; *total_out = count; return true; }
 
     uint32_t g = raw[0];
     for (uint32_t i = 1; i < count; i++) g = gcd_u32(g, raw[i]);
@@ -62,6 +335,8 @@ bool stripe_volume_normalize_ratios(uint32_t* speeds, uint32_t count, uint32_t* 
     *total_out = total;
     return true;
 }
+
+#undef MAX_RATIO
 
 bool stripe_volume_create(STRIPE_VOLUME* vol, DISK_INFO** disks, uint32_t disk_count, uint32_t stripe_unit) {
     if (!vol || !disks || disk_count < MIN_DISKS || disk_count > MAX_DISKS) return false;
@@ -316,7 +591,8 @@ bool stripe_volume_expand(STRIPE_VOLUME* vol, DISK_INFO** new_disks, uint32_t ne
 
 void stripe_volume_destroy(STRIPE_VOLUME* vol) {
     if (!vol) return;
-    if (!vol->disks) return;
+    /* Stop workers before closing handles */
+    stripe_volume_workers_stop(vol);
     for (uint32_t i = 0; i < vol->disk_count; i++) {
         if (vol->disks[i]->handle != INVALID_HANDLE_VALUE) {
             CloseHandle(vol->disks[i]->handle);
@@ -410,25 +686,32 @@ bool stripe_volume_map_lba(const STRIPE_VOLUME* vol, uint64_t virtual_offset,
     return (remaining == 0);
 }
 
+/* ---- Read with per-disk workers ---------------------------------- */
+
 bool stripe_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offset, uint32_t length) {
     uint32_t ps = 0;
     if (!vol || !buffer || length == 0) return false;
     if (virtual_offset + length > vol->virtual_total_bytes) return false;
     CHECK_DISKS(vol);
     profiler_read_begin(&ps);
+
     if (vol->raid_level == RAID_LEVEL_MIRROR) {
         bool ok = mirror_volume_read(vol, buffer, virtual_offset, length);
         if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
         profiler_read_end(ps, ok ? length : 0);
         return ok;
     }
-    if (vol->cache_enabled && !vol->cache_flush_in_progress &&
+
+    if (vol->cache_enabled &&
         virtual_offset + length <= vol->cache.cache_size_bytes) {
         bool ok = cache_read(&vol->cache, buffer, virtual_offset, length);
-        if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
-        profiler_read_end(ps, ok ? length : 0);
-        return ok;
+        if (ok) {
+            InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
+            profiler_read_end(ps, ok ? length : 0);
+            return ok;
+        }
     }
+
     IO_MAPPING_ENTRY entries[MAX_IO_ENTRIES];
     uint32_t entry_count = 0;
     if (!stripe_volume_map_lba(vol, virtual_offset, entries, &entry_count, length)) {
@@ -436,57 +719,13 @@ bool stripe_volume_read(STRIPE_VOLUME* vol, void* buffer, uint64_t virtual_offse
         return false;
     }
 
-    uint8_t* buf = (uint8_t*)buffer;
-    OVERLAPPED ovs[MAX_IO_ENTRIES];
-    HANDLE events[MAX_IO_ENTRIES];
-    bool ok = true;
-
-    for (uint32_t i = 0; i < entry_count; i++) {
-        DISK_INFO* disk = vol->disks[entries[i].disk_index];
-        HANDLE evt = CreateEventW(NULL, TRUE, FALSE, NULL);
-        if (!evt) {
-            LOG_ERROR("CreateEventW failed at disk %u (read)", entries[i].disk_index);
-            for (uint32_t j = 0; j < i; j++) {
-                if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
-                CloseHandle(events[j]);
-            }
-            profiler_read_end(ps, 0);
-            return false;
-        }
-        events[i] = evt;
-        memset(&ovs[i], 0, sizeof(OVERLAPPED));
-        ovs[i].Offset = (DWORD)(entries[i].physical_offset & 0xFFFFFFFF);
-        ovs[i].OffsetHigh = (DWORD)((entries[i].physical_offset >> 32) & 0xFFFFFFFF);
-        ovs[i].hEvent = evt;
-        DWORD read_bytes = 0;
-        if (!ReadFile(disk->handle, buf, entries[i].length_bytes, &read_bytes, &ovs[i])) {
-            if (GetLastError() != ERROR_IO_PENDING) {
-                LOG_ERROR("Read failed on disk %u (async)", entries[i].disk_index);
-                CloseHandle(evt);
-                for (uint32_t j = 0; j < i; j++) {
-                    if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
-                    CloseHandle(events[j]);
-                }
-                profiler_read_end(ps, 0);
-                return false;
-            }
-        }
-        buf += entries[i].length_bytes;
-    }
-
-    for (uint32_t i = 0; i < entry_count; i++) {
-        DWORD transferred = 0;
-        if (!GetOverlappedResult(vol->disks[entries[i].disk_index]->handle, &ovs[i], &transferred, TRUE)) {
-            LOG_ERROR("Read completion failed on disk %u", entries[i].disk_index);
-            ok = false;
-        }
-        CloseHandle(events[i]);
-    }
-
-    InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, ok ? length : 0);
+    bool ok = submit_entries(vol, entries, entry_count, (const uint8_t*)buffer, IO_OP_READ);
+    if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_read, length);
     profiler_read_end(ps, ok ? length : 0);
     return ok;
 }
+
+/* ---- Write with per-disk workers --------------------------------- */
 
 bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtual_offset, uint32_t length) {
     uint32_t ps = 0;
@@ -494,12 +733,16 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
     if (virtual_offset + length > vol->virtual_total_bytes) return false;
     CHECK_DISKS(vol);
     profiler_write_begin(&ps);
+
     if (vol->raid_level == RAID_LEVEL_MIRROR) {
         bool ok = mirror_volume_write(vol, buffer, virtual_offset, length);
         if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, length);
         profiler_write_end(ps, ok ? length : 0);
         return ok;
     }
+
+    /* Cached path — unchanged logic, only the write‑through flush
+     * now uses per‑disk workers via submit_entries. */
     if (vol->cache_enabled && !vol->cache_flush_in_progress &&
         virtual_offset + length <= vol->cache.cache_size_bytes) {
         bool ok = false;
@@ -507,50 +750,10 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
             IO_MAPPING_ENTRY entries[MAX_IO_ENTRIES];
             uint32_t entry_count = 0;
             if (stripe_volume_map_lba(vol, virtual_offset, entries, &entry_count, length)) {
-                const uint8_t* buf = (const uint8_t*)buffer;
-                OVERLAPPED ovs[MAX_IO_ENTRIES];
-                HANDLE events[MAX_IO_ENTRIES];
-                memset(events, 0, sizeof(events));
-                bool wt_ok = true;
-                for (uint32_t i = 0; i < entry_count; i++) {
-                    DISK_INFO* disk = vol->disks[entries[i].disk_index];
-                    HANDLE evt = CreateEventW(NULL, TRUE, FALSE, NULL);
-                    if (!evt) {
-                        for (uint32_t j = 0; j < i; j++) {
-                            if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
-                            CloseHandle(events[j]);
-                        }
-                        wt_ok = false; break;
-                    }
-                    events[i] = evt;
-                    memset(&ovs[i], 0, sizeof(OVERLAPPED));
-                    ovs[i].Offset = (DWORD)(entries[i].physical_offset & 0xFFFFFFFF);
-                    ovs[i].OffsetHigh = (DWORD)((entries[i].physical_offset >> 32) & 0xFFFFFFFF);
-                    ovs[i].hEvent = evt;
-                    DWORD written = 0;
-                    if (!WriteFile(disk->handle, buf, entries[i].length_bytes, &written, &ovs[i])) {
-                        if (GetLastError() != ERROR_IO_PENDING) {
-                            CloseHandle(evt); events[i] = NULL; wt_ok = false; break;
-                        }
-                    }
-                    buf += entries[i].length_bytes;
-                }
-                if (wt_ok) {
-                    for (uint32_t i = 0; i < entry_count; i++) {
-                        DWORD transferred = 0;
-                        if (!GetOverlappedResult(vol->disks[entries[i].disk_index]->handle, &ovs[i], &transferred, TRUE))
-                            wt_ok = false;
-                        CloseHandle(events[i]); events[i] = NULL;
-                    }
-                }
-                if (!wt_ok) {
-                    LOG_WARN("Write-through flush failed at offset %llu", (unsigned long long)virtual_offset);
-                    for (uint32_t i = 0; i < entry_count; i++) {
-                        if (events[i]) { CancelIoEx(vol->disks[entries[i].disk_index]->handle, &ovs[i]); CloseHandle(events[i]); }
-                    }
-                } else {
+                ok = submit_entries(vol, entries, entry_count,
+                                    (const uint8_t*)buffer, IO_OP_WRITE);
+                if (ok)
                     ok = cache_write(&vol->cache, buffer, virtual_offset, length);
-                }
             }
         } else {
             ok = cache_write(&vol->cache, buffer, virtual_offset, length);
@@ -559,6 +762,8 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
         profiler_write_end(ps, ok ? length : 0);
         return ok;
     }
+
+    /* Direct I/O path */
     IO_MAPPING_ENTRY entries[MAX_IO_ENTRIES];
     uint32_t entry_count = 0;
     if (!stripe_volume_map_lba(vol, virtual_offset, entries, &entry_count, length)) {
@@ -566,58 +771,13 @@ bool stripe_volume_write(STRIPE_VOLUME* vol, const void* buffer, uint64_t virtua
         return false;
     }
 
-    const uint8_t* buf = (const uint8_t*)buffer;
-    OVERLAPPED ovs[MAX_IO_ENTRIES];
-    HANDLE events[MAX_IO_ENTRIES];
-    memset(events, 0, sizeof(events));
-    bool ok = true;
-
-    for (uint32_t i = 0; i < entry_count; i++) {
-        DISK_INFO* disk = vol->disks[entries[i].disk_index];
-        HANDLE evt = CreateEventW(NULL, TRUE, FALSE, NULL);
-        if (!evt) {
-            LOG_ERROR("CreateEventW failed at disk %u (write)", entries[i].disk_index);
-            for (uint32_t j = 0; j < i; j++) {
-                if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
-                CloseHandle(events[j]);
-            }
-            profiler_write_end(ps, 0);
-            return false;
-        }
-        events[i] = evt;
-        memset(&ovs[i], 0, sizeof(OVERLAPPED));
-        ovs[i].Offset = (DWORD)(entries[i].physical_offset & 0xFFFFFFFF);
-        ovs[i].OffsetHigh = (DWORD)((entries[i].physical_offset >> 32) & 0xFFFFFFFF);
-        ovs[i].hEvent = evt;
-        DWORD written = 0;
-        if (!WriteFile(disk->handle, buf, entries[i].length_bytes, &written, &ovs[i])) {
-            if (GetLastError() != ERROR_IO_PENDING) {
-                LOG_ERROR("Write failed on disk %u (async)", entries[i].disk_index);
-                CloseHandle(evt);
-                for (uint32_t j = 0; j < i; j++) {
-                    if (events[j]) CancelIoEx(vol->disks[entries[j].disk_index]->handle, &ovs[j]);
-                    CloseHandle(events[j]);
-                }
-                profiler_write_end(ps, 0);
-                return false;
-            }
-        }
-        buf += entries[i].length_bytes;
-    }
-
-    for (uint32_t i = 0; i < entry_count; i++) {
-        DWORD transferred = 0;
-        if (!GetOverlappedResult(vol->disks[entries[i].disk_index]->handle, &ovs[i], &transferred, TRUE)) {
-            LOG_ERROR("Write completion failed on disk %u", entries[i].disk_index);
-            ok = false;
-        }
-        CloseHandle(events[i]);
-    }
-
-    InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, ok ? length : 0);
+    bool ok = submit_entries(vol, entries, entry_count, (const uint8_t*)buffer, IO_OP_WRITE);
+    if (ok) InterlockedExchangeAdd64((volatile LONG64*)&vol->bytes_written, length);
     profiler_write_end(ps, ok ? length : 0);
     return ok;
 }
+
+/* ---- Debug / test helpers (unchanged) ---------------------------- */
 
 bool stripe_volume_dump_mapping(const STRIPE_VOLUME* vol, uint64_t start, uint64_t end) {
     if (!vol || start >= end) return false;

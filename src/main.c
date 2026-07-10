@@ -5,6 +5,8 @@
 #include "wizard.h"
 #include "fuse_bridge.h"
 #include "disk_scanner.h"
+#include "device_manager.h"
+#include "volume_manager.h"
 #include "cleanup.h"
 #include "gui.h"
 
@@ -40,6 +42,39 @@ static int cli_main(int argc, char* argv[]) {
                 do_restore(g_state.cfg.config.mount_letter ? g_state.cfg.config.mount_letter : 'G');
             } else {
                 cmd_process("quick");
+            }
+        } else if (strcmp(argv[1], "--mount") == 0) {
+            char mount_letter = argc > 2 ? (char)toupper(argv[2][0]) : 'R';
+            if (mount_letter < 'A' || mount_letter > 'Z') mount_letter = 'R';
+            int timeout_sec = 300;
+            if (argc > 3) timeout_sec = atoi(argv[3]);
+            if (timeout_sec < 1) timeout_sec = 300;
+            device_refresh();
+            uint32_t loaded_count = 0;
+            if (volume_load(&g_state.vol.volume, g_state.disk.loaded_disks, &loaded_count,
+                            g_state.disk.physical_disks, g_state.disk.physical_count, NULL)) {
+                g_state.disk.disk_count = loaded_count;
+                for (uint32_t i = 0; i < loaded_count; i++)
+                    g_state.disk.disks[i] = &g_state.disk.loaded_disks[i];
+                g_state.vol.volume_valid = true;
+                if (g_state.vol.volume.generation > 0) {
+                    uint64_t cache_size = (uint64_t)CACHE_DEFAULT_MB * 1024ULL * 1024ULL;
+                    volume_cache_enable(&g_state.vol.volume, cache_size,
+                                        &g_state.cache.cache_on, &g_state.cache.cache_mb, &g_state.cache.flush_thread);
+                }
+                if (g_state.vol.volume.raid_level == RAID_LEVEL_STRIPE) {
+                    if (!stripe_volume_workers_init(&g_state.vol.volume)) {
+                        LOG_ERROR("Failed to start per-disk workers");
+                    }
+                }
+                g_state.rt.state = STATE_MOUNTED;
+                RC rc = raid_mount(mount_letter);
+                if (rc == RC_OK) {
+                    LOG_OK("Mounted %c: for %d seconds. Ctrl+C to unmount early.", mount_letter, timeout_sec);
+                    Sleep((DWORD)timeout_sec * 1000);
+                }
+            } else {
+                LOG_ERROR("No RAID volume found on any drive. Run quick setup first.");
             }
         } else {
             char full_cmd[1024] = {0};

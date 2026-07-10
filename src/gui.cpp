@@ -297,8 +297,18 @@ static unsigned int __stdcall worker_thread(void* arg) {
         break;
     }
     case W_MIRROR: {
+        g_gui.progress_frac = 0.0f;
         strncpy(g_gui.progress_text, "Creating mirror...", 63);
-        strncpy(g_gui.progress_step, "Step 1/1: Creating RAID1 mirror...", 63);
+        char* args[16] = {0}; int argc = 0;
+        char buf[256]; snprintf(buf, 256, "%s", params);
+        char* tok = strtok(buf, " ");
+        while (tok && argc < 16) { args[argc++] = tok; tok = strtok(NULL, " "); }
+        strncpy(g_gui.progress_step, "Step 1/2: Initializing pools...", 63);
+        g_gui.progress_frac = 0.3f;
+        if (argc > 0) raid_init_pools(argc, args);
+        if (InterlockedCompareExchange(&g_gui.worker_cancel, 1, 1) == 1) { strncpy(result, "Cancelled", 511); break; }
+        strncpy(g_gui.progress_step, "Step 2/2: Creating RAID1 mirror...", 63);
+        g_gui.progress_frac = 0.7f;
         RC rc = raid_mirror();
         g_gui.progress_frac = 1.0f;
         snprintf(result, 511, "Mirror: %s", rc == RC_OK ? "OK" : "FAILED");
@@ -1146,7 +1156,16 @@ static void ShowToolbar(void) {
     if (!create_ok) ImGui::EndDisabled();
     ImGui::SameLine();
     if (!create_ok) ImGui::BeginDisabled();
-    if (ImGui::Button("Mirror", ImVec2(bw, 28))) start_worker(W_MIRROR, NULL);
+    if (ImGui::Button("Mirror", ImVec2(bw, 28))) {
+        char p[256] = {0}; int pos = 0;
+        for (int i = 0; i < g_gui.selected_count && i < 4; i++) {
+            int mb = g_gui.pool_per_disk[i] > 0 ? g_gui.pool_per_disk[i] :
+                     (g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200);
+            pos += snprintf(p + pos, 255 - (size_t)pos, "%s%d:%d", pos ? " " : "",
+                g_gui.selected_disks[i], mb);
+        }
+        start_worker(W_MIRROR, p);
+    }
     if (!create_ok) ImGui::EndDisabled();
     ImGui::SameLine();
     char ml_label[4] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'R', ':', 0 };
@@ -1901,7 +1920,16 @@ static void RenderMainUI(void) {
                 }
                 start_worker(W_CREATE, p);
             }
-            if (ImGui::MenuItem("Mirror", NULL, false, can_create)) start_worker(W_MIRROR, NULL);
+            if (ImGui::MenuItem("Mirror", NULL, false, can_create)) {
+                char p[256] = {0}; int pos = 0;
+                for (int i = 0; i < g_gui.selected_count && i < 4; i++) {
+                    int mb = g_gui.pool_per_disk[i] > 0 ? g_gui.pool_per_disk[i] :
+                             (g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200);
+                    pos += snprintf(p + pos, 255 - (size_t)pos, "%s%d:%d", pos ? " " : "",
+                        g_gui.selected_disks[i], mb);
+                }
+                start_worker(W_MIRROR, p);
+            }
             if (ImGui::MenuItem("Restore", NULL, false, !g_gui.worker_running)) g_gui.show_restore_wizard = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Quick Setup", NULL, false, !g_gui.worker_running)) start_worker(W_QUICK_SETUP, NULL);

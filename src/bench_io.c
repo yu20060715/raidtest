@@ -177,15 +177,16 @@ bool bench_volume(STRIPE_VOLUME* vol, uint32_t size_mb, uint32_t block_kb) {
         written += block_size;
         if ((i + 1) % 64 == 0) { printf("."); fflush(stdout); }
     }
+    /* Flush write-back cache before stopping timer so throughput
+       reflects actual disk I/O, not just RAM memcpy speed. */
+    if (ok && vol->cache_enabled && !vol->cache.write_through) {
+        cache_flush_all(&vol->cache, vol);
+    }
     QueryPerformanceCounter(&t2);
     if (ok) {
         double elapsed = (double)(t2.QuadPart - t1.QuadPart) / freq.QuadPart;
         double mbs = elapsed > 0 ? (written / (1024.0 * 1024.0)) / elapsed : 0;
         LOG_OK("Write: %.2f MB in %.2f s = %.0f MB/s", written / (1024.0 * 1024.0), elapsed, mbs);
-    }
-
-    if (vol->cache_enabled) {
-        cache_flush_all(&vol->cache, vol);
     }
 
     QueryPerformanceCounter(&t1);
@@ -204,6 +205,83 @@ bool bench_volume(STRIPE_VOLUME* vol, uint32_t size_mb, uint32_t block_kb) {
         double elapsed = (double)(t2.QuadPart - t1.QuadPart) / freq.QuadPart;
         double mbs = elapsed > 0 ? (read_bytes / (1024.0 * 1024.0)) / elapsed : 0;
         LOG_OK("Read:  %.2f MB in %.2f s = %.0f MB/s", read_bytes / (1024.0 * 1024.0), elapsed, mbs);
+    }
+
+    VirtualFree(buf, 0, MEM_RELEASE);
+    return ok;
+}
+
+bool bench_raw_volume(STRIPE_VOLUME* vol, uint32_t size_mb, uint32_t block_kb) {
+    if (!vol) return false;
+    uint64_t size_bytes = (uint64_t)size_mb * 1024 * 1024;
+    uint32_t block_size = block_kb * 1024;
+    uint32_t blocks = (uint32_t)(size_bytes / block_size);
+    if (size_bytes > vol->virtual_total_bytes) size_bytes = vol->virtual_total_bytes;
+    size_mb = (uint32_t)(size_bytes / (1024 * 1024));
+    blocks = (uint32_t)(size_bytes / block_size);
+
+    /* Flush any pending cache data first */
+    if (vol->cache_enabled) {
+        cache_flush_all(&vol->cache, vol);
+    }
+
+    void* buf = VirtualAlloc(NULL, block_size, MEM_COMMIT, PAGE_READWRITE);
+    if (!buf) { LOG_ERROR("Out of memory"); return false; }
+    memset(buf, 0xFF, block_size);
+
+    LARGE_INTEGER freq, t1, t2;
+    QueryPerformanceFrequency(&freq);
+
+    /* Write phase — temporarily bypass RAM cache so we measure
+       submit_entries() → disk_worker → WriteFile() only */
+    bool saved_cache = vol->cache_enabled;
+    vol->cache_enabled = false;
+
+    LOG_INFO("RawDisk: %u MB, block=%u KB, %u blocks (cache disabled)...", size_mb, block_kb, blocks);
+
+    QueryPerformanceCounter(&t1);
+    uint64_t written = 0;
+    bool ok = true;
+    for (uint32_t i = 0; i < blocks; i++) {
+        if (!stripe_volume_write(vol, buf, (uint64_t)i * block_size, block_size)) {
+            LOG_ERROR("Raw write failed at block %u", i);
+            ok = false; break;
+        }
+        written += block_size;
+        if ((i + 1) % 64 == 0) { printf("."); fflush(stdout); }
+    }
+    QueryPerformanceCounter(&t2);
+
+    vol->cache_enabled = saved_cache;
+
+    if (ok) {
+        double elapsed = (double)(t2.QuadPart - t1.QuadPart) / freq.QuadPart;
+        double mbs = elapsed > 0 ? (written / (1024.0 * 1024.0)) / elapsed : 0;
+        LOG_OK("Raw Write: %.2f MB in %.2f s = %.0f MB/s (through disk workers)",
+               written / (1024.0 * 1024.0), elapsed, mbs);
+    }
+
+    /* Read phase — with original cache setting restored */
+    if (vol->cache_enabled) {
+        cache_flush_all(&vol->cache, vol);
+    }
+
+    QueryPerformanceCounter(&t1);
+    uint64_t read_bytes = 0;
+    for (uint32_t i = 0; i < blocks; i++) {
+        if (!stripe_volume_read(vol, buf, (uint64_t)i * block_size, block_size)) {
+            LOG_ERROR("Raw read failed at block %u", i);
+            ok = false; break;
+        }
+        read_bytes += block_size;
+        if ((i + 1) % 64 == 0) { printf("."); fflush(stdout); }
+    }
+    QueryPerformanceCounter(&t2);
+
+    if (ok) {
+        double elapsed = (double)(t2.QuadPart - t1.QuadPart) / freq.QuadPart;
+        double mbs = elapsed > 0 ? (read_bytes / (1024.0 * 1024.0)) / elapsed : 0;
+        LOG_OK("Raw Read:  %.2f MB in %.2f s = %.0f MB/s", read_bytes / (1024.0 * 1024.0), elapsed, mbs);
     }
 
     VirtualFree(buf, 0, MEM_RELEASE);
