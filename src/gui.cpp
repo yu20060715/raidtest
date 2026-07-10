@@ -1014,6 +1014,11 @@ static void ShowSettings(bool* open) {
     ImGui::SetNextItemWidth(30);
     if (ImGui::InputText("##set_ml", ml, 2, ImGuiInputTextFlags_CharsUppercase))
         s->mount_letter = ml[0] ? ml[0] : 'G';
+    ImGui::Text("Default pool size (MB):");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(80);
+    int pmb = (int)s->pool_mb;
+    if (ImGui::InputInt("##set_pool_mb", &pmb, 1024)) { if (pmb < 1024) pmb = 1024; s->pool_mb = (uint32_t)pmb; }
     ImGui::Text("Default cache size (MB):");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80);

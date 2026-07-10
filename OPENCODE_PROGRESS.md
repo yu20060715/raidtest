@@ -13,6 +13,11 @@
 ## Priority 3: strncpy truncation warning (line 904)
 - `strncpy(g_gui.status, g_gui.worker_result, sizeof(g_gui.status)-1)` triggered GCC warning because `status` (128B) < `worker_result` (512B). Replaced with `snprintf(g_gui.status, sizeof(g_gui.status), "%s", ...)`.
 - Build: OK (no more strncpy warning in our code; only third-party imgui warnings remain)
+
+## Priority 4: Wire pool_mb into Settings dialog
+- Added "Default pool size (MB)" input field to `ShowSettings()` between mount_letter and cache_mb fields. Syncs to `g_gui.pool_size_mb` on Save (existing logic at line 1038 already handled this).
+- Priority 5 (Quick Setup pool_mb consistency) resolved implicitly: settings → `g_gui.pool_size_mb` sync chain already existed at startup (line 1992) and on save (line 1038). Disk allocation panel and Quick Setup both read `g_gui.pool_size_mb`.
+- Build: OK
 - `W_MIRROR` directly called `raid_mirror()` → `volume_create_internal()` which opens pool files, but they were never created. Result: Mirror was entirely broken.
 - Fixed by following same pattern as `W_CREATE`: build disk:pool_size arg string from Disk Allocation panel, pass to `raid_init_pools()`, then call `raid_mirror()`.
 - Both toolbar Mirror (line 1149) and Actions menu Mirror (line 1923) now build and pass pool params.
