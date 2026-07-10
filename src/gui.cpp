@@ -103,7 +103,7 @@ static struct {
     int                     selected_count;
     int                     disk_checked[64];
 
-    char                    mount_letter;
+
     int                     pool_size_mb;
     int                     pool_per_disk[8];
 
@@ -503,11 +503,11 @@ static unsigned int __stdcall worker_thread(void* arg) {
           char* cache_av[] = { cache_str }; raid_cache(1, cache_av); }
         strncpy(g_gui.progress_step, "Step 5/5: Mounting...", 63);
         g_gui.progress_frac = 0.9f;
-        { char mnt = g_gui.mount_letter ? g_gui.mount_letter : 'G';
+        { char mnt = g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'G';
           rc = raid_mount(mnt); }
         g_gui.progress_frac = 1.0f;
         if (rc != RC_OK) { snprintf(result, 511, "Quick Setup: volume created but mount failed"); break; }
-        snprintf(result, 511, "Quick Setup complete! Volume mounted at %c: (%u disks)", g_gui.mount_letter ? g_gui.mount_letter : 'G', sel_count);
+        snprintf(result, 511, "Quick Setup complete! Volume mounted at %c: (%u disks)", g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'G', sel_count);
         refresh_ui_model();
         toast_push("Quick Setup complete", TOAST_OK);
         break;
@@ -841,7 +841,7 @@ static unsigned int __stdcall worker_thread(void* arg) {
         _pipe(pipe_fds, 65536, _O_BINARY);
         _dup2(pipe_fds[1], _fileno(stdout));
         _close(pipe_fds[1]);
-        char mnt[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
+        char mnt[2] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'G', 0 };
         char* mav[] = { mnt };
         RC rc = raid_metadata(1, mav);
         _dup2(saved, _fileno(stdout));
@@ -1025,7 +1025,7 @@ static void ShowSettings(bool* open) {
     ImGui::Text("Language: English");
     ImGui::Text("Version: %s", APP_VERSION);
     ImGui::Dummy(ImVec2(0, 8));
-    if (ImGui::Button("Save Settings", ImVec2(140, 24))) { config_save(s); gui_log("Settings saved"); toast_push("Settings saved", TOAST_OK); }
+    if (ImGui::Button("Save Settings", ImVec2(140, 24))) { config_save(s); g_gui.pool_size_mb = (int)s->pool_mb; gui_log("Settings saved"); toast_push("Settings saved", TOAST_OK); }
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(100, 24))) { *open = false; }
     ImGui::End();
@@ -1149,9 +1149,21 @@ static void ShowToolbar(void) {
     if (ImGui::Button("Mirror", ImVec2(bw, 28))) start_worker(W_MIRROR, NULL);
     if (!create_ok) ImGui::EndDisabled();
     ImGui::SameLine();
+    char ml_label[4] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'R', ':', 0 };
+    ImGui::SetNextItemWidth(36);
+    if (ImGui::BeginCombo("##ml", ml_label, ImGuiComboFlags_NoArrowButton)) {
+        for (char c = 'A'; c <= 'Z'; c++) {
+            char lb[2] = { c, 0 };
+            bool sel = (c == g_gui.settings.mount_letter);
+            if (ImGui::Selectable(lb, sel)) { g_gui.settings.mount_letter = c; }
+            if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine(0, 0);
     if (!mountable) ImGui::BeginDisabled();
     if (ImGui::Button("Mount", ImVec2(bw, 28))) {
-        char m[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
+        char m[2] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'R', 0 };
         start_worker(W_MOUNT, m);
     }
     if (!mountable) ImGui::EndDisabled();
@@ -1172,8 +1184,7 @@ static void ShowToolbar(void) {
     if (ImGui::Button("Bench", ImVec2(bw, 28))) {
         g_gui.show_bench = true; g_gui.bench_done = false;
         g_gui.bench_read_mbs[0] = 0; g_gui.bench_write_mbs[0] = 0; g_gui.bench_latency[0] = 0;
-        char m[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
-        start_worker(W_BENCHFS, m);
+        start_worker(W_BENCHFS, "512 10240");
     }
     if (!benchable) ImGui::EndDisabled();
     ImGui::EndChild();
@@ -1181,10 +1192,47 @@ static void ShowToolbar(void) {
 
 static void ShowDiskList(void) {
     uint32_t count = device_get_count();
-    float txt = (float)ImGui::GetContentRegionAvail().y - 4;
+    float txt = (float)ImGui::GetContentRegionAvail().y - 28;
     ImGui::Text("%u disk(s) | %u selected | Total: %.1f GB | State: %s",
         g_gui.disk_summary.count, g_gui.disk_summary.selected_count,
         g_gui.disk_summary.total_capacity_mb / 1024.0, ui_get_state_str());
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 200);
+    if (ImGui::SmallButton("All")) {
+        for (uint32_t i = 0; i < count && i < 64; i++) {
+            DISK_INFO* d = device_get(i);
+            if (d && d->healthy) g_gui.disk_checked[i] = 1;
+        }
+        uint32_t indices[64]; uint32_t n = 0;
+        for (uint32_t i = 0; i < count && i < 64; i++) if (g_gui.disk_checked[i]) indices[n++] = i;
+        device_select(indices, n); refresh_ui_model();
+        int def = g_gui.pool_size_mb ? g_gui.pool_size_mb : 51200;
+        for (int si = 0; si < g_gui.selected_count && si < 8; si++) g_gui.pool_per_disk[si] = def;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("None")) {
+        memset(g_gui.disk_checked, 0, sizeof(g_gui.disk_checked));
+        device_select(NULL, 0); refresh_ui_model();
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Sel SATA")) {
+        for (uint32_t i = 0; i < count && i < 64; i++) {
+            DISK_INFO* d = device_get(i);
+            g_gui.disk_checked[i] = (d && (d->type == DISK_TYPE_SATA_SSD)) ? 1 : 0;
+        }
+        uint32_t indices[64]; uint32_t n = 0;
+        for (uint32_t i = 0; i < count && i < 64; i++) if (g_gui.disk_checked[i]) indices[n++] = i;
+        device_select(indices, n); refresh_ui_model();
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Sel NVMe")) {
+        for (uint32_t i = 0; i < count && i < 64; i++) {
+            DISK_INFO* d = device_get(i);
+            g_gui.disk_checked[i] = (d && d->type == DISK_TYPE_NVME_SSD) ? 1 : 0;
+        }
+        uint32_t indices[64]; uint32_t n = 0;
+        for (uint32_t i = 0; i < count && i < 64; i++) if (g_gui.disk_checked[i]) indices[n++] = i;
+        device_select(indices, n); refresh_ui_model();
+    }
     static ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
         ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable;
     if (ImGui::BeginTable("##disks", 10, flags, ImVec2(0, txt))) {
@@ -1604,8 +1652,7 @@ static void ShowBenchmark(void) {
             ImGui::Separator();
             if (ImGui::Button("Run Again", ImVec2(100, 0))) {
                 g_gui.bench_done = false;
-                char m[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
-                start_worker(W_BENCHFS, m);
+                start_worker(W_BENCHFS, "512 10240");
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(100, 0))) {
@@ -1739,33 +1786,34 @@ static void ShowSimulationControls(void) {
 
 static void ShowCacheControls(void) {
     UI_VOLUME_INFO* vi = &g_gui.vol_info;
-    if (!vi->mounted) return;
-    ImGui::SeparatorText("Cache");
-    static int sz = 512;
+    ImGui::SeparatorText("> Cache");
+    if (!vi->mounted) { ImGui::TextDisabled("Mount volume to configure cache"); return; }
+    static int sz = 1024;
     if (vi->cache_enabled) sz = (int)vi->cache_mb;
     ImGui::SetNextItemWidth(100);
     ImGui::InputInt("##cachesz", &sz, 256);
     if (sz < 256) sz = 256;
     ImGui::SameLine();
+    ImGui::TextDisabled("MB");
+    ImGui::SameLine();
+    bool busy = g_gui.worker_running != 0;
     if (vi->cache_enabled) {
-        if (ImGui::SmallButton("Off")) {
-            char p[] = "off";
-            start_worker(W_CACHE, p);
-        }
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0.5f,0,0.8f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0,0.6f,0,0.9f));
+        if (ImGui::Button(" ON ", ImVec2(40,22)) && !busy) { char p[] = "off"; start_worker(W_CACHE, p); }
+        ImGui::PopStyleColor(2);
         ImGui::SameLine();
-        if (ImGui::SmallButton("Toggle WT")) {
-            char p[] = "wt";
-            start_worker(W_CACHE, p);
-        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0,1,0,1));
+        ImGui::Text("ON (%u MB)", vi->cache_mb);
+        ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("ON (%u MB)", vi->cache_mb);
+        if (ImGui::SmallButton("WT") && !busy) { char p[] = "wt"; start_worker(W_CACHE, p); }
     } else {
-        if (ImGui::SmallButton("On")) {
-            char p[32]; snprintf(p, 32, "%d", sz);
-            start_worker(W_CACHE, p);
-        }
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.4f,0.4f,0.4f,0.8f));
+        if (ImGui::Button(" OFF ", ImVec2(40,22)) && !busy) { char p[32]; snprintf(p, 32, "%d", sz); start_worker(W_CACHE, p); }
+        ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("OFF");
+        ImGui::TextDisabled("Disabled");
     }
 }
 
@@ -1860,7 +1908,10 @@ static void RenderMainUI(void) {
             if (ImGui::MenuItem("Health Check", NULL, false, !g_gui.worker_running)) start_worker(W_CHECK, NULL);
             ImGui::Separator();
             bool can_mount = g_gui.state_value >= 2 && !g_gui.vol_info.mounted && !g_gui.worker_running;
-            if (ImGui::MenuItem("Mount", NULL, false, can_mount)) start_worker(W_MOUNT, NULL);
+            if (ImGui::MenuItem("Mount", NULL, false, can_mount)) {
+                char m[2] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'R', 0 };
+                start_worker(W_MOUNT, m);
+            }
             bool can_umount = g_gui.vol_info.mounted && !g_gui.worker_running;
             if (ImGui::MenuItem("Unmount", NULL, false, can_umount)) start_worker(W_UNMOUNT, NULL);
             bool can_destroy = g_gui.state_value >= 2 && !g_gui.worker_running;
@@ -1870,8 +1921,7 @@ static void RenderMainUI(void) {
             if (ImGui::MenuItem("Benchmark", NULL, false, can_bench)) {
                 g_gui.show_bench = true; g_gui.bench_done = false;
                 g_gui.bench_read_mbs[0] = 0; g_gui.bench_write_mbs[0] = 0; g_gui.bench_latency[0] = 0;
-                char m[2] = { g_gui.mount_letter ? g_gui.mount_letter : 'G', 0 };
-                start_worker(W_BENCHFS, m);
+                start_worker(W_BENCHFS, "512 10240");
             }
             if (ImGui::MenuItem("Rebuild", NULL, false, !g_gui.worker_running)) g_gui.show_rebuild_wizard = true;
             ImGui::Separator();
@@ -1939,7 +1989,6 @@ extern "C" int gui_run(void) {
     event_bus_subscribe(EVENT_ERROR, event_cb, NULL);
     event_bus_subscribe(EVENT_METADATA_UPDATED, event_cb, NULL);
     event_bus_subscribe(EVENT_CACHE_CHANGED, event_cb, NULL);
-    g_gui.mount_letter = g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'G';
     g_gui.pool_size_mb = (int)g_gui.settings.pool_mb ? (int)g_gui.settings.pool_mb : 51200;
 
     gui_log("RAIDTEST " APP_VERSION " - GUI Edition started");
