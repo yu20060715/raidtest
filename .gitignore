@@ -40,3 +40,8 @@ Thumbs.db
 # Temp
 *.tmp
 *.bak
+*.stackdump
+
+# Generated directories
+logs/
+temp/

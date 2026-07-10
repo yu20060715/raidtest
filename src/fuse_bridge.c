@@ -497,7 +497,7 @@ static int raid_ioctl(const char* path, int cmd, void* arg, struct fuse_file_inf
     STRIPE_VOLUME* vol = g_ctx.vol;
     if (!vol) return -ENODEV;
 
-    uint32_t func = ((uint32_t)cmd >> 4) & 0x0FFF;
+    uint32_t func = ((uint32_t)cmd >> 2) & 0xFFF;
 
     switch (func) {
     case 0x17: { /* IOCTL_DISK_GET_LENGTH_INFO */

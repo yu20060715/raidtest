@@ -1,4 +1,4 @@
-# RAIDTEST v1.0 RC4 — Repository Progress (codename: RAIDV3)
+# RAIDTEST v1.0 — Repository Progress (codename: RAIDV3)
 
 ## Current Status: Final Demo Rehearsal Complete
 
@@ -567,3 +567,54 @@ if (vol->cache_enabled &&
 - `[System.IO.File]::ReadAllBytes("Z:\test.txt")` → 13 bytes ✓
 - Multiple files, repeated writes/reads all pass
 - Cache flush still operates correctly (1 block flushed per write, verified in log)
+
+---
+
+## Project Freeze — GUI Audit & Fixes (2026-07-10)
+
+### GUI Audit
+Full audit of `src/gui.cpp` (2069 lines) completed. Identified:
+- **25 categories** of completed GUI features (theme engine, settings, toolbars, disk list, volume info, event log, all dialogs, worker thread, event bus)
+- **8 minor issues** (P2-P3): I/O Test no popup, Random Stress no popup, Expand dialog index bug, auto-restore/auto-mount ignored, perf_history unused, F5 accelerator unhooked, fixed window size, pool_size_mb sync
+- **3 backend features with no GUI**: raid_planner, raid_benchraw, raid_mapdrive
+- **Stubs/dead code**: PerfSample perf_history[120] never used, bench_read_mbs/write_mbs redundant copies
+
+### P2 GUI Fixes Applied
+| # | Fix | Detail |
+|---|-----|--------|
+| 1 | I/O Test popup | `W_TEST` now sets `show_test_dialog=true`, displays result in modal |
+| 2 | Random Stress popup | `W_RANDOM` now sets `show_random_dialog=true`, displays result in modal |
+| 3 | Expand dialog index bug | `expand_sizes[0..7]` initialized to 51200 at dialog start, preventing stale-value reuse |
+| 4 | Auto-restore/auto-mount | Startup now checks `settings.auto_restore` → calls `raid_load(NULL)`, then `settings.auto_mount` → calls `raid_mount()` |
+
+### CrystalDiskMark Compatibility
+Verified via `check_cdm.exe R:`:
+- Steps 01-10 (GetLogicalDrives → DeleteFileA) all PASS
+- Steps 11-12 (IOCTL_DISK_GET_LENGTH_INFO, IOCTL_STORAGE_QUERY_PROPERTY) FAIL on volume handle (expected — volume IOCTLs go through Windows storage stack, not FUSE ioctl)
+- CDM uses file-level I/O via `diskspd.exe`, not these IOCTLs → **CDM is compatible**
+- FUSE ioctl function code extraction fixed: `(cmd >> 4) & 0x0FFF` → `(cmd >> 2) & 0xFFF`
+- Full report: `docs/CrystalDiskMark_Compatibility.md`
+
+### Project Cleanup
+Root directory organized:
+- `logs/` — mount/scan/daemon logs (25 files)
+- `temp/` — pool data files (23 Craidtest_*.dat)
+- `archive/` — test sources, test executables, benchmark scripts
+- Empty `tests/` and `stress/` directories removed
+- Root entries reduced from ~87 to 28
+
+### Final Build
+- `build.bat` OK (pre-existing warnings only)
+- `raidtest_tests.exe` — 33 passed, 10 failed (all pre-existing, none from GUI changes)
+- GUI launches correctly
+- All 4 P2 fixes verified in build
+
+### Known Limitations (unchanged)
+- P0: OVERLAPPED use-after-free in I/O paths
+- P0: FUSE stack buffer overflows
+- P1: FUSE file table lifecycle race
+- P1: Journal write synchronization
+- P1: Event bus critical section leak
+- P1: NULL dereference risk at device_get() call sites
+- P2: Export diagnostic uses deprecated GetVersion()
+- Technical debt: g_state locking missing in raid_service/FUSE, hardcoded `C:\RAIDTEST\` in tests

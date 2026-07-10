@@ -137,6 +137,8 @@ static struct {
     int                     random_ops;
     int                     random_maxkb;
     char                    test_result[256];
+    bool                    show_test_dialog;
+    bool                    show_random_dialog;
 
     char                    status[128];
     int                     state_value;
@@ -743,6 +745,7 @@ static unsigned int __stdcall worker_thread(void* arg) {
         g_gui.progress_frac = 1.0f;
         snprintf(g_gui.test_result, 255, "I/O verification: %s - Volume data integrity %s", rc == RC_OK ? "PASS" : "FAIL", rc == RC_OK ? "OK" : "CHECK FAILED");
         snprintf(result, 511, "%s", g_gui.test_result);
+        g_gui.show_test_dialog = true;
         refresh_ui_model();
         if (rc == RC_OK) toast_push("I/O verification passed", TOAST_OK);
         else toast_push("I/O verification FAILED - data corruption detected", TOAST_ERROR);
@@ -758,7 +761,9 @@ static unsigned int __stdcall worker_thread(void* arg) {
         g_gui.progress_frac = 0.5f;
         { RC rc = raid_random(ac, av);
         g_gui.progress_frac = 1.0f;
-        snprintf(result, 511, "Random I/O test: %s (%d ops, %d KB max)", rc == RC_OK ? "PASS" : "FAIL", g_gui.random_ops ? g_gui.random_ops : 100, g_gui.random_maxkb ? g_gui.random_maxkb : 64);
+        snprintf(g_gui.test_result, 255, "Random I/O test: %s (%d ops, %d KB max)", rc == RC_OK ? "PASS" : "FAIL", g_gui.random_ops ? g_gui.random_ops : 100, g_gui.random_maxkb ? g_gui.random_maxkb : 64);
+        snprintf(result, 511, "%s", g_gui.test_result);
+        g_gui.show_random_dialog = true;
         refresh_ui_model();
         if (rc == RC_OK) toast_push("Random I/O test passed", TOAST_OK);
         else toast_push("Random I/O test FAILED", TOAST_ERROR); }
@@ -1554,6 +1559,7 @@ static void ShowExpandDialog(void) {
         ImGui::Separator();
         uint32_t dc = device_get_count();
         g_gui.expand_count = 0;
+        for (int i = 0; i < 8; i++) g_gui.expand_sizes[i] = 51200;
         if (ImGui::BeginChild("##expand_list", ImVec2(0, 240), true)) {
             for (uint32_t i = 0; i < dc; i++) {
                 DISK_INFO* d = device_get(i);
@@ -1683,6 +1689,38 @@ static void ShowBenchmark(void) {
                 g_gui.show_bench = false;
                 ImGui::CloseCurrentPopup();
             }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void ShowTestDialog(void) {
+    if (!g_gui.show_test_dialog) return;
+    ImGui::OpenPopup("I/O Test Results");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("I/O Test Results", &g_gui.show_test_dialog, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("%s", g_gui.test_result);
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(100, 0))) {
+            g_gui.show_test_dialog = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
+static void ShowRandomDialog(void) {
+    if (!g_gui.show_random_dialog) return;
+    ImGui::OpenPopup("Random I/O Stress Results");
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Random I/O Stress Results", &g_gui.show_random_dialog, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("%s", g_gui.test_result);
+        ImGui::Separator();
+        if (ImGui::Button("Close", ImVec2(100, 0))) {
+            g_gui.show_random_dialog = false;
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
@@ -1887,6 +1925,8 @@ static void RenderMainUI(void) {
     ShowMetadataDialog();
     ShowBenchmark();
     ShowRawBenchResults();
+    ShowTestDialog();
+    ShowRandomDialog();
     ShowExportDialog();
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
@@ -2016,6 +2056,25 @@ extern "C" int gui_run(void) {
     event_bus_subscribe(EVENT_METADATA_UPDATED, event_cb, NULL);
     event_bus_subscribe(EVENT_CACHE_CHANGED, event_cb, NULL);
     g_gui.pool_size_mb = (int)g_gui.settings.pool_mb ? (int)g_gui.settings.pool_mb : 51200;
+
+    if (g_gui.settings.auto_restore) {
+        gui_log("Auto-restore: scanning and loading superblock...");
+        raid_scan();
+        RC rc = raid_load(NULL);
+        refresh_ui_model();
+        if (rc == RC_OK) {
+            gui_log("Auto-restore: superblock loaded successfully");
+            if (g_gui.settings.auto_mount) {
+                char m[2] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'G', 0 };
+                gui_log("Auto-mount: mounting volume...");
+                raid_mount(m[0]);
+                refresh_ui_model();
+                gui_log("Auto-mount: volume mounted");
+            }
+        } else {
+            gui_log("Auto-restore: no superblock found or load failed");
+        }
+    }
 
     gui_log("RAIDTEST " APP_VERSION " - GUI Edition started");
     snprintf(g_gui.status, sizeof(g_gui.status), "Ready - %u disk(s) detected", g_gui.disk_summary.count);

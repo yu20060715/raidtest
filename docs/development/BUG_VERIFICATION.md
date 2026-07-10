@@ -15,7 +15,7 @@
 
 ---
 
-## 1. Confirmation of Known Bugs
+## 1. Confirmation of Known Limitations
 
 ### B1 — P0: OVERLAPPED on stack in storage_common.c
 

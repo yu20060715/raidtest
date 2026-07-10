@@ -1,4 +1,4 @@
-# RAIDTEST v1.0 RC5 — Known Limitations
+# RAIDTEST v1.0 — Known Limitations
 
 ## Platform
 

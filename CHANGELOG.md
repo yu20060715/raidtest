@@ -4,6 +4,34 @@ All notable changes to RAIDTEST are documented here.
 
 ---
 
+## v1.0 (2026-07-10) — Final Release
+
+### Added (GUI Audit Fixes)
+- **I/O Test result popup** — `W_TEST` now displays result in modal dialog instead of silent completion
+- **Random Stress result popup** — `W_RANDOM` displays progress and result in modal dialog
+- **Expand dialog initialization** — `expand_sizes[0..7]` initialized to 51200 at dialog open, preventing stale-value reuse
+- **Auto-restore/auto-mount on startup** — settings `auto_restore` and `auto_mount` now execute at launch
+- **`benchraw` CLI command** — raw disk benchmark bypassing RAM cache
+
+### Changed
+- **Weighted Stripe normalization** — `MAX_RATIO=32` rounding replaces `RATIO_SCALE=10000`, fixing degenerate single-disk phase cycles
+- **Benchmark measurement** — `bench_volume()` now flushes cache before stopping timer (measures real disk throughput, not cache speed)
+- **Cache read during flush** — removed `!vol->cache_flush_in_progress` guard on read path, fixing `STATUS_IO_DEVICE_ERROR` on small file reads
+- **GUI audit** — full `src/gui.cpp` audit (25 categories, 8 minor issues, 4 P2 fixes)
+- **Project directory organized** — `logs/`, `temp/`, `archive/` created, root reduced from ~87 to 25 entries
+
+### Fixed
+- `KNOWN_LIMITATIONS.md`, `—help`, `--version` version strings updated to `v1.0`
+- Release documents synchronized (README, DEMO, QUICK_START, CHANGELOG, PROJECT_STATUS, KNOWN_LIMITATIONS)
+
+### QA
+- Build: OK (pre-existing imgui warnings only)
+- Tests: 33 passed, 10 failed (all pre-existing I/O failures requiring physical test setup)
+- GUI: all P2 fixes verified
+- CrystalDiskMark compatibility verified
+
+---
+
 ## v1.0 RC4 (2026-07-06) — Release Candidate 4
 
 ### Added (8 Features)

@@ -1,8 +1,7 @@
-# RAIDTEST v1.0 RC5 — Quick Demo Walkthrough
+# RAIDTEST — Quick Demo Walkthrough
 
 > **Target time:** 5–6 minutes
 > **Prerequisites:** Windows 10/11, WinFsp installed, Administrator privileges
-> **See also:** `docs/release/FINAL_DEMO_OPERATOR_GUIDE.md` (full operator manual)
 
 ---
 

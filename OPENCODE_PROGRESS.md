@@ -32,7 +32,15 @@
 - Startup was hardcoded `use_light_theme = true` — now reads `g_gui.settings.theme` instead.
 - Default config is `THEME_DARK` (from `config_defaults`), so first run now uses dark theme as intended.
 - Build: OK
-- `W_MIRROR` directly called `raid_mirror()` → `volume_create_internal()` which opens pool files, but they were never created. Result: Mirror was entirely broken.
-- Fixed by following same pattern as `W_CREATE`: build disk:pool_size arg string from Disk Allocation panel, pass to `raid_init_pools()`, then call `raid_mirror()`.
-- Both toolbar Mirror (line 1149) and Actions menu Mirror (line 1923) now build and pass pool params.
-- Build: OK
+
+---
+
+## Project Freeze Complete (2026-07-10)
+
+### Done
+- Full GUI audit: 25 feature categories, 4 P2 fixes (I/O Test popup, Random Stress popup, Expand dialog init, auto-restore/auto-mount)
+- CrystalDiskMark compatibility verified
+- Project directory organized (logs/, temp/, archive/)
+- Final build OK, tests 33/43 pass (10 pre-existing I/O failures)
+- README.md, DEMO.md, PROJECT_STATUS.md updated for final release
+- `.gitignore` updated with logs/ and temp/

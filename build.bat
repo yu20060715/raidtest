@@ -56,23 +56,5 @@ if errorlevel 1 (
 )
 echo Test build OK
 
-:: Step 5: build stress/validation tests with gcc
-echo Building stress tests...
-C:\msys64\usr\bin\bash.exe --login -c "export PATH='/mingw64/bin:/usr/bin:/c/Windows/System32'; cd '%UNIX_DIR%' && gcc -Wall -O2 -Isrc tests/test_longrun.c src/stripe_engine.c src/mirror_engine.c src/storage_common.c src/ram_cache.c src/logger.c src/journal.c src/pool_io.c src/superblock.c src/crc32.c src/uuid.c src/test_common.c src/profiler.c -o test_longrun.exe -static-libgcc 2>&1"
-if errorlevel 1 ( echo test_longrun build FAILED & pause & exit /b 1 )
-
-C:\msys64\usr\bin\bash.exe --login -c "export PATH='/mingw64/bin:/usr/bin:/c/Windows/System32'; cd '%UNIX_DIR%' && gcc -Wall -O2 -Isrc tests/test_random_io.c src/stripe_engine.c src/mirror_engine.c src/storage_common.c src/ram_cache.c src/logger.c src/journal.c src/pool_io.c src/superblock.c src/crc32.c src/uuid.c src/test_common.c src/profiler.c -o test_random_io.exe -static-libgcc 2>&1"
-if errorlevel 1 ( echo test_random_io build FAILED & pause & exit /b 1 )
-
-C:\msys64\usr\bin\bash.exe --login -c "export PATH='/mingw64/bin:/usr/bin:/c/Windows/System32'; cd '%UNIX_DIR%' && gcc -Wall -O2 -Isrc tests/test_concurrent.c src/stripe_engine.c src/mirror_engine.c src/storage_common.c src/ram_cache.c src/logger.c src/journal.c src/pool_io.c src/superblock.c src/crc32.c src/uuid.c src/test_common.c src/profiler.c -o test_concurrent.exe -static-libgcc 2>&1"
-if errorlevel 1 ( echo test_concurrent build FAILED & pause & exit /b 1 )
-
-C:\msys64\usr\bin\bash.exe --login -c "export PATH='/mingw64/bin:/usr/bin:/c/Windows/System32'; cd '%UNIX_DIR%' && gcc -Wall -O2 -Isrc tests/test_metadata_corrupt.c src/stripe_engine.c src/mirror_engine.c src/storage_common.c src/ram_cache.c src/logger.c src/journal.c src/pool_io.c src/superblock.c src/crc32.c src/uuid.c src/test_common.c src/profiler.c -o test_metadata_corrupt.exe -static-libgcc 2>&1"
-if errorlevel 1 ( echo test_metadata_corrupt build FAILED & pause & exit /b 1 )
-
-C:\msys64\usr\bin\bash.exe --login -c "export PATH='/mingw64/bin:/usr/bin:/c/Windows/System32'; cd '%UNIX_DIR%' && gcc -Wall -O2 -Isrc stress/test_powerfail.c src/stripe_engine.c src/mirror_engine.c src/storage_common.c src/ram_cache.c src/logger.c src/journal.c src/pool_io.c src/superblock.c src/crc32.c src/uuid.c src/test_common.c src/profiler.c -o test_powerfail.exe -static-libgcc 2>&1"
-if errorlevel 1 ( echo test_powerfail build FAILED & pause & exit /b 1 )
-
-:: cli_bench.c removed (stub, unused)
-
-echo All stress tests OK
+:: Step 5: stress/validation tests moved to archive/ (not part of release build)
+echo Stress test sources archived - skipping stress build

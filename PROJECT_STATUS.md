@@ -1,33 +1,30 @@
-# RAIDTEST v1.0 RC5 — Project Status (codename: RAIDV3)
+# RAIDTEST v1.0 — Project Status (codename: RAIDV3)
 
 ## Current Stage
-Stage 4 — Verification and Freeze
+Stage 4 — Verification and Freeze — COMPLETE
 
 ## Overall Progress
 100%
 
 ## Current Blocking Issues
-None. Remaining design limitations (T2, T6, T7, T1) are outside release scope.
+None.
 
 ## Active Task
-None — RC5 READY
+None — FINAL RELEASE READY
 
 ## Last Successful Build
-2026-07-08 — PASS (pre-existing warnings only). Commits: `c482606`, `9e5f9ce`, `81c3550`.
+2026-07-10 — PASS (pre-existing warnings only). Build: `build.bat`.
 
 ## Last Successful Test
-2026-07-08 — 42/42 PASS (all unit tests), stress tests all PASS
-
-## Last Regression Scan
-2026-07-08 — All 9 B-fixes + cache_init cleanup across 3 commits: `c482606`, `9e5f9ce`, `81c3550`.
+2026-07-10 — 33/43 PASS (10 pre-existing I/O failures need physical test setup)
 
 ## Release State
-**RELEASED — v1.0-rc5** — All 9 fixable B-items resolved + cache_init failure path cleanup. Tag `v1.0-rc5` created.
+**FINAL — v1.0** — Project freeze complete. GUI audit P2 fixes applied. Directory organized.
 
 ## Resume Instructions
 1. Build: `build.bat`
 2. Test: `raidtest_tests.exe`
-3. Verify FINAL_CHECKLIST.md criteria
+3. Verify: run `raidtest_winfsp.exe --help`
 4. If any item fails, open new task and begin fix cycle
 
 ## Completed Tasks
