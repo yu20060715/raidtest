@@ -901,7 +901,7 @@ static void check_worker_done(void) {
         bool failed = (strstr(g_gui.worker_result, "FAILED") != NULL);
         bool cancelled = (strstr(g_gui.worker_result, "Cancelled") != NULL);
         gui_log(g_gui.worker_result);
-        strncpy(g_gui.status, g_gui.worker_result, sizeof(g_gui.status) - 1);
+        snprintf(g_gui.status, sizeof(g_gui.status), "%s", g_gui.worker_result);
         if (failed && !cancelled)
             MessageBoxA(g_gui.hwnd, g_gui.worker_result, "Operation Failed", MB_ICONERROR | MB_OK);
         if (g_gui.worker_handle) {
