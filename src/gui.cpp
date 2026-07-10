@@ -363,12 +363,8 @@ static unsigned int __stdcall worker_thread(void* arg) {
         g_gui.progress_frac = 0.0f;
         char* args[2] = {0}; int argc = 0;
         if (params[0]) { char* tok = strtok(params, " "); while (tok && argc < 2) { args[argc++] = tok; tok = strtok(NULL, " "); } }
-        for (int step = 0; step < 4; step++) {
-            snprintf(g_gui.progress_step, 63, "Step %d/4: Running benchmark pass...", step + 1);
-            g_gui.progress_frac = (step + 1) * 0.25f;
-            if (InterlockedCompareExchange(&g_gui.worker_cancel, 1, 1) == 1) { strncpy(result, "Benchmark cancelled", 511); goto bench_done; }
-            Sleep(250);
-        }
+        strncpy(g_gui.progress_step, "Benchmarking filesystem...", 63);
+        g_gui.progress_frac = 0.5f;
         { RC rc = raid_benchfs(argc, args);
         g_gui.progress_frac = 1.0f;
         if (rc == RC_OK) {
@@ -380,7 +376,6 @@ static unsigned int __stdcall worker_thread(void* arg) {
             snprintf(result, 511, "Bench: R=%.1f W=%.1f MB/s", p->avg_read_mbs, p->avg_write_mbs);
             toast_push("Benchmark complete", TOAST_OK);
         } else { snprintf(result, 511, "Benchmark FAILED"); toast_push("Benchmark failed", TOAST_ERROR); } }
-        bench_done:;
         break;
     }
     case W_EXPORT: {
@@ -711,12 +706,8 @@ static unsigned int __stdcall worker_thread(void* arg) {
         g_gui.progress_frac = 0.0f;
         char* args[2] = {0}; int argc = 0;
         if (params[0]) { char* tok = strtok(params, " "); while (tok && argc < 2) { args[argc++] = tok; tok = strtok(NULL, " "); } }
-        for (int step = 0; step < 4; step++) {
-            snprintf(g_gui.progress_step, 63, "Step %d/4: Benchmarking raw disks...", step + 1);
-            g_gui.progress_frac = (step + 1) * 0.25f;
-            if (InterlockedCompareExchange(&g_gui.worker_cancel, 1, 1) == 1) { strncpy(result, "Bench cancelled", 511); goto raw_bench_done; }
-            Sleep(250);
-        }
+        strncpy(g_gui.progress_step, "Benchmarking raw disks...", 63);
+        g_gui.progress_frac = 0.5f;
         { RC rc = raid_bench(argc, args);
         g_gui.progress_frac = 1.0f;
         if (rc == RC_OK) {
@@ -742,7 +733,6 @@ static unsigned int __stdcall worker_thread(void* arg) {
             snprintf(result, 511, "Raw Bench: R=%.1f W=%.1f MB/s (avg)", tot_r / (n > 0 ? n : 1), tot_w / (n > 0 ? n : 1));
             toast_push("Raw bench complete", TOAST_OK);
         } else { snprintf(result, 511, "Raw Bench FAILED"); toast_push("Raw bench failed", TOAST_ERROR); } }
-        raw_bench_done:;
         break;
     }
     case W_TEST: {
@@ -765,19 +755,13 @@ static unsigned int __stdcall worker_thread(void* arg) {
         char pbuf[64]; snprintf(pbuf, 63, "%d %d", g_gui.random_ops ? g_gui.random_ops : 100, g_gui.random_maxkb ? g_gui.random_maxkb : 64);
         char* av[2]; int ac = 0;
         char* tok = strtok(pbuf, " "); while (tok && ac < 2) { av[ac++] = tok; tok = strtok(NULL, " "); }
-        for (int step = 0; step < 5; step++) {
-            snprintf(g_gui.progress_step, 63, "Random I/O pass %d/5...", step + 1);
-            g_gui.progress_frac = (step + 1) * 0.2f;
-            if (InterlockedCompareExchange(&g_gui.worker_cancel, 1, 1) == 1) { strncpy(result, "Random test cancelled", 511); goto random_done; }
-            Sleep(200);
-        }
+        g_gui.progress_frac = 0.5f;
         { RC rc = raid_random(ac, av);
         g_gui.progress_frac = 1.0f;
         snprintf(result, 511, "Random I/O test: %s (%d ops, %d KB max)", rc == RC_OK ? "PASS" : "FAIL", g_gui.random_ops ? g_gui.random_ops : 100, g_gui.random_maxkb ? g_gui.random_maxkb : 64);
         refresh_ui_model();
         if (rc == RC_OK) toast_push("Random I/O test passed", TOAST_OK);
         else toast_push("Random I/O test FAILED", TOAST_ERROR); }
-        random_done:;
         break;
     }
     case W_CONFIG_SAVE: {

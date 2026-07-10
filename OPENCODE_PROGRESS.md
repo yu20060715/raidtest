@@ -18,6 +18,13 @@
 - Added "Default pool size (MB)" input field to `ShowSettings()` between mount_letter and cache_mb fields. Syncs to `g_gui.pool_size_mb` on Save (existing logic at line 1038 already handled this).
 - Priority 5 (Quick Setup pool_mb consistency) resolved implicitly: settings → `g_gui.pool_size_mb` sync chain already existed at startup (line 1992) and on save (line 1038). Disk allocation panel and Quick Setup both read `g_gui.pool_size_mb`.
 - Build: OK
+
+## Priority 6: Remove fake progress Sleep() loops from bench/random
+- W_BENCHFS: removed 4× `Sleep(250)` loop with fake step counter (lines 366-371). Now sets progress to 0.5 before raid_benchfs, 1.0 after.
+- W_BENCH (raw): removed 4× `Sleep(250)` loop (lines 714-718). Same pattern.
+- W_RANDOM: removed 5× `Sleep(200)` loop (lines 768-772). Same pattern.
+- Removed unused `bench_done`, `raw_bench_done`, `random_done` goto labels.
+- Build: OK
 - `W_MIRROR` directly called `raid_mirror()` → `volume_create_internal()` which opens pool files, but they were never created. Result: Mirror was entirely broken.
 - Fixed by following same pattern as `W_CREATE`: build disk:pool_size arg string from Disk Allocation panel, pass to `raid_init_pools()`, then call `raid_mirror()`.
 - Both toolbar Mirror (line 1149) and Actions menu Mirror (line 1923) now build and pass pool params.
