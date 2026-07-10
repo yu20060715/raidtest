@@ -26,7 +26,7 @@
 
 #define MAX_LOG_LINES 500
 #define MAX_LOG_LINE_LEN 256
-#define APP_VERSION "v1.0 RC4"
+#define APP_VERSION "v1.0"
 
 #define MAX_TOASTS 8
 #define TOAST_DURATION 5.0
@@ -39,7 +39,7 @@ enum WorkerAction {
     W_NONE = 0,
     W_SCAN, W_CREATE, W_MIRROR, W_MOUNT, W_UNMOUNT, W_DESTROY,
     W_REFRESH, W_BENCHFS, W_EXPORT,
-    W_QUICK_SETUP, W_LOAD_SUPERBLOCK, W_LOAD_CONFIG,
+    W_QUICK_SETUP, W_LOAD_SUPERBLOCK, W_LOAD_CONFIG, W_AUTO_RESTORE,
     W_REBUILD, W_CHECK,
     W_SIMULATE_FAIL, W_SIMULATE_HEALTHY, W_SIMULATE_DISCONNECT,
     W_WIZARD_SCAN, W_WIZARD_CREATE,
@@ -562,6 +562,32 @@ static unsigned int __stdcall worker_thread(void* arg) {
         refresh_ui_model();
         if (rc == RC_OK) toast_push("Restore completed", TOAST_OK);
         else toast_push("Restore failed", TOAST_ERROR);
+        break;
+    }
+    case W_AUTO_RESTORE: {
+        strncpy(g_gui.progress_text, "Auto-restoring...", 63);
+        strncpy(g_gui.progress_step, "Step 1/3: Scanning disks...", 63);
+        g_gui.progress_frac = 0.0f;
+        RC rc = raid_scan();
+        if (rc != RC_OK) { snprintf(result, 511, "Auto-restore FAILED - no disks found"); break; }
+        g_gui.progress_frac = 0.4f;
+        strncpy(g_gui.progress_step, "Step 2/3: Loading superblock...", 63);
+        rc = raid_load(NULL);
+        if (rc != RC_OK) { snprintf(result, 511, "Auto-restore: no superblock found"); break; }
+        g_gui.progress_frac = 0.7f;
+        if (g_gui.settings.auto_mount) {
+            strncpy(g_gui.progress_step, "Step 3/3: Mounting volume...", 63);
+            char m[2] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'G', 0 };
+            rc = raid_mount(m[0]);
+            g_gui.progress_frac = 1.0f;
+            if (rc == RC_OK) snprintf(result, 511, "Auto-restore: volume mounted at %c:", m[0]);
+            else snprintf(result, 511, "Auto-restore: load OK, mount FAILED");
+        } else {
+            g_gui.progress_frac = 1.0f;
+            snprintf(result, 511, "Auto-restore: superblock loaded");
+        }
+        refresh_ui_model();
+        toast_push("Auto-restore complete", TOAST_OK);
         break;
     }
     case W_REBUILD: {
@@ -1256,7 +1282,7 @@ static void ShowDiskList(void) {
         device_select(indices, n); refresh_ui_model();
     }
     static ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-        ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable;
+        ImGuiTableFlags_ScrollY | ImGuiTableFlags_ScrollX | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Resizable;
     if (ImGui::BeginTable("##disks", 10, flags, ImVec2(0, txt))) {
         ImGui::TableSetupColumn("Model",  ImGuiTableColumnFlags_WidthFixed, 170);
         ImGui::TableSetupColumn("ID",     ImGuiTableColumnFlags_WidthFixed, 25);
@@ -1332,6 +1358,8 @@ static void ShowDiskAllocation(void) {
     ImGui::SetNextItemWidth(100);
     ImGui::InputInt("##unif_pool", &def, 1024);
     ImGui::SameLine();
+    ImGui::TextUnformatted("MB");
+    ImGui::SameLine();
     if (ImGui::SmallButton("Set All")) {
         for (int i = 0; i < g_gui.selected_count && i < 8; i++) {
             DISK_INFO* d = device_get(g_gui.selected_disks[i]);
@@ -1340,8 +1368,6 @@ static void ShowDiskAllocation(void) {
             g_gui.pool_per_disk[i] = def < max_mb ? def : max_mb;
         }
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("MB (uniform)");
     for (int i = 0; i < g_gui.selected_count && i < 8; i++) {
         DISK_INFO* d = device_get(g_gui.selected_disks[i]);
         if (!d) continue;
@@ -2057,28 +2083,10 @@ extern "C" int gui_run(void) {
     event_bus_subscribe(EVENT_CACHE_CHANGED, event_cb, NULL);
     g_gui.pool_size_mb = (int)g_gui.settings.pool_mb ? (int)g_gui.settings.pool_mb : 51200;
 
-    if (g_gui.settings.auto_restore) {
-        gui_log("Auto-restore: scanning and loading superblock...");
-        raid_scan();
-        RC rc = raid_load(NULL);
-        refresh_ui_model();
-        if (rc == RC_OK) {
-            gui_log("Auto-restore: superblock loaded successfully");
-            if (g_gui.settings.auto_mount) {
-                char m[2] = { g_gui.settings.mount_letter ? g_gui.settings.mount_letter : 'G', 0 };
-                gui_log("Auto-mount: mounting volume...");
-                raid_mount(m[0]);
-                refresh_ui_model();
-                gui_log("Auto-mount: volume mounted");
-            }
-        } else {
-            gui_log("Auto-restore: no superblock found or load failed");
-        }
-    }
-
     gui_log("RAIDTEST " APP_VERSION " - GUI Edition started");
     snprintf(g_gui.status, sizeof(g_gui.status), "Ready - %u disk(s) detected", g_gui.disk_summary.count);
     if (g_gui.settings.first_run) g_gui.show_welcome = true;
+    bool auto_restore_pending = g_gui.settings.auto_restore;
     MSG msg = {0};
     while (msg.message != WM_QUIT) {
         if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -2086,6 +2094,11 @@ extern "C" int gui_run(void) {
             continue;
         }
         check_worker_done();
+        if (auto_restore_pending) {
+            auto_restore_pending = false;
+            gui_log("Auto-restore: scanning and loading superblock...");
+            start_worker(W_AUTO_RESTORE, NULL);
+        }
         if (InterlockedCompareExchange(&g_gui.refresh_pending, 0, 1) == 1)
             refresh_ui_model();
         double now = ImGui::GetTime();
